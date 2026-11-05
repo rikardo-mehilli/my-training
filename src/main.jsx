@@ -229,6 +229,7 @@ function GymPage({userId}) {
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
   const [notes, setNotes] = useState('');
   const [sets, setSets] = useState([emptySet()]);
+  const [selectedExercise, setSelectedExercise] = useState('');
 
   async function loadSessions() {
     setLoading(true); setError('');
@@ -298,10 +299,50 @@ function GymPage({userId}) {
     else { setSessions(prev=>prev.filter(s=>s.id!==id)); setNotice('Allenamento eliminato.'); }
   }
   const totalSets = sessions.reduce((n,s)=>n+(s.workout_sets||[]).length,0);
+  const exerciseNames = useMemo(() => {
+    const names = new Map();
+    sessions.forEach(session => (session.workout_sets || []).forEach(set => {
+      const clean = (set.exercise_name || '').trim();
+      if (clean) names.set(clean.toLocaleLowerCase('it-IT'), clean);
+    }));
+    return [...names.values()].sort((a,b)=>a.localeCompare(b,'it'));
+  }, [sessions]);
+  const currentExercise = exerciseNames.includes(selectedExercise) ? selectedExercise : (exerciseNames[0] || '');
+  const exerciseProgress = useMemo(() => {
+    if (!currentExercise) return [];
+    return sessions.map(session => {
+      const matching = (session.workout_sets || []).filter(set => (set.exercise_name || '').trim().toLocaleLowerCase('it-IT') === currentExercise.toLocaleLowerCase('it-IT'));
+      if (!matching.length) return null;
+      const loads = matching.map(set => set.weight_kg == null ? null : Number(set.weight_kg)).filter(value => value !== null && Number.isFinite(value));
+      const volume = matching.reduce((sum,set) => {
+        const weight = set.weight_kg == null ? 0 : Number(set.weight_kg);
+        const reps = set.reps == null ? 0 : Number(set.reps);
+        return sum + (Number.isFinite(weight) && Number.isFinite(reps) ? weight * reps : 0);
+      },0);
+      return {
+        date: session.performed_at.slice(0,10),
+        label: new Date(session.performed_at).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}),
+        maxWeight: loads.length ? Math.max(...loads) : null,
+        volume: volume || 0,
+        sets: matching.length
+      };
+    }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
+  }, [sessions, currentExercise]);
+  const bestWeight = exerciseProgress.reduce((best,item)=>item.maxWeight == null ? best : Math.max(best,item.maxWeight),0);
+  const latestWeight = [...exerciseProgress].reverse().find(item=>item.maxWeight != null)?.maxWeight ?? null;
   return <div className="gym-page">
     {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
     <div className="gym-intro panel"><div><div className="eyebrow">ALLENAMENTO CON I PESI</div><h2>Il tuo diario palestra</h2><p>Registra esercizi, serie, ripetizioni, carichi e recuperi. I dati vengono salvati nel tuo archivio personale.</p></div><button className="primary-button" onClick={openForm}><Plus size={17}/> Nuovo allenamento</button></div>
     <div className="gym-summary"><div className="stat-card"><div className="stat-top"><span>Allenamenti</span><Dumbbell size={18}/></div><strong>{sessions.length}</strong><small>Sessioni registrate</small></div><div className="stat-card"><div className="stat-top"><span>Serie registrate</span><Activity size={18}/></div><strong>{totalSets}</strong><small>Totale serie nello storico</small></div></div>
+    <section className="panel gym-progress">
+      <div className="panel-heading gym-progress-heading"><div><h2>Progressione dei carichi</h2><p>Confronta il carico massimo e il volume per ogni esercizio</p></div><label className="progress-select-label">Esercizio<select value={currentExercise} onChange={e=>setSelectedExercise(e.target.value)} disabled={!exerciseNames.length}>{exerciseNames.length ? exerciseNames.map(name=><option key={name} value={name}>{name}</option>) : <option>Nessun esercizio</option>}</select></label></div>
+      {!exerciseNames.length ? <div className="empty">Registra almeno un esercizio con un carico per iniziare a vedere la progressione.</div> : <>
+        <div className="progress-kpis"><div><small>Miglior carico registrato</small><strong>{bestWeight ? `${bestWeight.toLocaleString('it-IT')} kg` : '—'}</strong></div><div><small>Ultimo carico massimo</small><strong>{latestWeight == null ? '—' : `${latestWeight.toLocaleString('it-IT')} kg`}</strong></div><div><small>Sessioni con questo esercizio</small><strong>{exerciseProgress.length}</strong></div></div>
+        <div className="progress-charts"><div className="progress-chart-card"><div className="progress-chart-title"><b>Carico massimo per sessione</b><span>kg</span></div>{exerciseProgress.some(item=>item.maxWeight!==null) ? <div className="progress-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={exerciseProgress}><defs><linearGradient id="gymLoadFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#829aff" stopOpacity={0.3}/><stop offset="100%" stopColor="#829aff" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}} width={38}/><Tooltip labelFormatter={(_,payload)=>payload?.[0]?.payload?.date ? new Date(payload[0].payload.date+'T12:00:00').toLocaleDateString('it-IT') : ''} formatter={value=>[`${value} kg`,'Carico massimo']} contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="maxWeight" stroke="#829aff" strokeWidth={2.5} fill="url(#gymLoadFill)" connectNulls/></AreaChart></ResponsiveContainer></div> : <div className="empty">Per questo esercizio non sono ancora stati inseriti carichi.</div>}</div>
+        <div className="progress-chart-card"><div className="progress-chart-title"><b>Volume per sessione</b><span>kg × ripetizioni</span></div><div className="progress-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={exerciseProgress}><defs><linearGradient id="gymVolumeFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#52c7ae" stopOpacity={0.28}/><stop offset="100%" stopColor="#52c7ae" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}} width={38}/><Tooltip formatter={value=>[`${Number(value).toLocaleString('it-IT')} kg·rip.`,'Volume']} contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="volume" stroke="#52c7ae" strokeWidth={2.5} fill="url(#gymVolumeFill)"/></AreaChart></ResponsiveContainer></div></div></div>
+        <p className="progress-note">Il carico massimo è il peso più alto registrato in una serie di quella sessione. Il volume è calcolato sommando carico × ripetizioni; le serie senza carico o ripetizioni contribuiscono zero.</p>
+      </>}
+    </section>
     <section className="panel gym-history"><div className="panel-heading"><div><h2>Storico palestra</h2><p>Le sessioni più recenti sono mostrate per prime</p></div></div>
       {loading ? <div className="empty">Caricamento allenamenti…</div> : sessions.length===0 ? <div className="empty">Non hai ancora registrato allenamenti in palestra. Crea la tua prima sessione.</div> : <div className="gym-session-list">{sessions.map(session=><article className="gym-session" key={session.id}>
         <div className="gym-session-head"><div><b>{session.title}</b><small>{new Date(session.performed_at).toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'})} · {(session.workout_sets||[]).length} serie</small></div><div className="gym-session-actions"><button className="edit-button" title="Modifica allenamento" aria-label="Modifica allenamento" onClick={()=>openEditForm(session)}><Pencil size={15}/></button><button className="delete-button" title="Elimina allenamento" aria-label="Elimina allenamento" onClick={()=>deleteWorkout(session.id)}><Trash2 size={16}/></button></div></div>
