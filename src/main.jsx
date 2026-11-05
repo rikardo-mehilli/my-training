@@ -16,7 +16,7 @@ const supabase = createClient(
 
 const trend = [{day:'Lun',value:0},{day:'Mar',value:58},{day:'Mer',value:0},{day:'Gio',value:72},{day:'Ven',value:0},{day:'Sab',value:145},{day:'Dom',value:42}];
 const nav = [
-  {label:'Panoramica', icon:LayoutDashboard}, {label:'Registro attività', icon:Activity}, {label:'Calendario', icon:CalendarDays},
+  {label:'Panoramica', icon:LayoutDashboard}, {label:'Registro attività', icon:Activity},
   {label:'Palestra', icon:Dumbbell}, {label:'Running', icon:Footprints}, {label:'Ciclismo', icon:Bike}, {label:'Statistiche', icon:ChartNoAxesCombined}, {label:'Impostazioni', icon:Settings}
 ];
 
@@ -46,6 +46,7 @@ function secondsToDuration(value) {
   const h = Math.floor(value / 3600), m = Math.round((value % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m} min`;
 }
+function formatMetric(value, digits=2) { const n=numberFrom(value); return n == null ? '—' : n.toLocaleString('it-IT',{maximumFractionDigits:digits}); }
 function activityIcon(type) {
   return type === 'Ciclismo' ? Bike : type === 'Palestra' ? Dumbbell : type === 'Running' ? Footprints : Activity;
 }
@@ -234,7 +235,7 @@ function App() {
   }, [session]);
 
   const filtered = useMemo(() => activities.filter(a =>
-    (active === 'Registro attività' || active === 'Panoramica' || active === 'Calendario' || active === 'Statistiche' || active === 'Impostazioni' || a.type === active) &&
+    (active === 'Registro attività' || active === 'Panoramica' || active === 'Statistiche' || active === 'Impostazioni' || a.type === active) &&
     `${a.title} ${a.type} ${a.source}`.toLowerCase().includes(query.toLowerCase())
   ), [activities, active, query]);
 
@@ -368,6 +369,14 @@ function App() {
   const totalSeconds = activities.reduce((sum, a) => sum + (durationToSeconds(a.duration) || 0), 0);
   const totalMeters = activities.reduce((sum, a) => sum + (numberFrom(a.distance) || 0) * 1000, 0);
   const totalElevation = activities.reduce((sum, a) => sum + (numberFrom(a.elevation) || 0), 0);
+  const disciplineActivities = activities.filter(a => a.type === active);
+  const disciplineSeconds = disciplineActivities.reduce((sum,a)=>sum+(durationToSeconds(a.duration)||0),0);
+  const disciplineMeters = disciplineActivities.reduce((sum,a)=>sum+(numberFrom(a.distance)||0)*1000,0);
+  const disciplineElevation = disciplineActivities.reduce((sum,a)=>sum+(numberFrom(a.elevation)||0),0);
+  const disciplinePaceValues = disciplineActivities.map(a=>a.type==='Running'?paceToSeconds(a.speedAvg):null).filter(v=>v!=null&&v>0);
+  const disciplineAvgPace = disciplinePaceValues.length ? disciplinePaceValues.reduce((a,b)=>a+b,0)/disciplinePaceValues.length : null;
+  const disciplineSpeedValues = disciplineActivities.map(a=>a.type==='Ciclismo'?numberFrom(a.speedAvg):null).filter(v=>v!=null&&v>0);
+  const disciplineAvgSpeed = disciplineSpeedValues.length ? disciplineSpeedValues.reduce((a,b)=>a+b,0)/disciplineSpeedValues.length : null;
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -377,7 +386,7 @@ function App() {
       <div className="sidebar-bottom"><div className="profile"><div className="avatar"><UserRound size={18}/></div><div><b>Area personale</b><small>{session.user.email}</small></div></div><div className="private-note">I tuoi dati, in un unico posto.</div></div>
     </aside>
     <main className="main">
-      <header className="topbar"><div className="breadcrumb">My Training <ChevronRight size={14}/> <b>{active}</b></div><div className="top-actions"><span className="sync"><span className="dot"/> Cloud sincronizzato</span><button className="icon-button" aria-label="Esci" title="Esci" onClick={signOut}><LogOut size={17}/></button></div></header>
+      <header className="topbar"><div className="breadcrumb">My Training <ChevronRight size={14}/> <b>{active}</b></div><div className="top-actions"><span className="sync"><span className="dot"/> Cloud sincronizzato</span><button className="secondary-button garmin-top-button" onClick={syncGarmin} disabled={garminSyncing}>{garminSyncing ? 'Sincronizzazione…' : 'Sincronizza Garmin'}</button><button className="icon-button" aria-label="Esci" title="Esci" onClick={signOut}><LogOut size={17}/></button></div></header>
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{active!=='Palestra' && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
         {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
@@ -393,26 +402,28 @@ function App() {
             <div><strong>{garminSyncReport.elevationProfiles}</strong><span>Profili altimetrici</span></div>
           </div>
         </section>}
-        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Calendario' ? <CalendarPage activities={activities} userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
+        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
           <section className="stats-grid">
-            <Stat icon={Activity} label="Attività registrate" value={activities.length} foot="Nel tuo archivio cloud"/>
-            <Stat icon={Clock3} label="Tempo registrato" value={secondsToDuration(totalSeconds)} foot="Totale delle attività"/>
-            <Stat icon={Gauge} label="Distanza registrata" value={`${(totalMeters/1000).toLocaleString('it-IT',{maximumFractionDigits:1})} km`} foot="Corsa + ciclismo"/>
-            <Stat icon={Waves} label="Dislivello positivo" value={`${totalElevation.toLocaleString('it-IT')} m`} foot="Quando disponibile"/>
+            {active==='Running' || active==='Ciclismo' ? <>
+              <Stat icon={Activity} label={active==='Running'?'Corse registrate':'Uscite registrate'} value={disciplineActivities.length} foot="Solo questa disciplina"/>
+              <Stat icon={Clock3} label="Tempo totale" value={secondsToDuration(disciplineSeconds)} foot="Durata complessiva"/>
+              <Stat icon={Gauge} label="Distanza totale" value={`${(disciplineMeters/1000).toLocaleString('it-IT',{maximumFractionDigits:1})} km`} foot={active==='Running'?'Corsa':'Ciclismo'}/>
+              <Stat icon={Waves} label="Dislivello positivo" value={`${disciplineElevation.toLocaleString('it-IT')} m`} foot="Quando disponibile"/>
+              <Stat icon={Gauge} label={active==='Running'?'Passo medio':'Velocità media'} value={active==='Running'?(disciplineAvgPace==null?'—':`${secondsToPace(disciplineAvgPace)} min/km`):(disciplineAvgSpeed==null?'—':`${formatMetric(disciplineAvgSpeed)} km/h`)} foot="Dati disponibili"/>
+            </> : <>
+              <Stat icon={Activity} label="Attività registrate" value={activities.length} foot="Nel tuo archivio cloud"/>
+              <Stat icon={Clock3} label="Tempo registrato" value={secondsToDuration(totalSeconds)} foot="Totale delle attività"/>
+              <Stat icon={Gauge} label="Distanza registrata" value={`${(totalMeters/1000).toLocaleString('it-IT',{maximumFractionDigits:1})} km`} foot="Corsa + ciclismo"/>
+              <Stat icon={Waves} label="Dislivello positivo" value={`${totalElevation.toLocaleString('it-IT')} m`} foot="Quando disponibile"/>
+            </>}
           </section>
           {active==='Panoramica' && <section className="two-col">
-            <div className="panel chart-panel"><div className="panel-heading"><div><h2>Attività della settimana</h2><p>Grafico dimostrativo, da collegare ai dati reali</p></div><span className="period">Esempio</span></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6d8cff" stopOpacity={0.28}/><stop offset="100%" stopColor="#6d8cff" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}} width={32}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="value" stroke="#829aff" strokeWidth={2.5} fill="url(#fill)"/></AreaChart></ResponsiveContainer></div></div>
-            <div className="panel import-panel"><div className="panel-heading"><div><h2>Collega le piattaforme</h2><p>Importa le tue attività sportive</p></div><Upload size={19}/></div><div className="integration">
-              <div className="integration-logo garmin">G</div>
-              <div className="integration-text"><b>Garmin Connect</b><small>Importa le attività nel tuo archivio</small></div>
-              <button className="secondary-button" onClick={syncGarmin} disabled={garminSyncing}>
-                {garminSyncing ? 'Sincronizzazione…' : 'Sincronizza'}
-              </button>
-            </div>
-            <div className="integration-foot">Sincronizzazione personale tramite Garmin Connect.</div></div>
+            <div className="panel chart-panel"><div className="panel-heading"><div><h2>Attività della settimana</h2><p>Grafico dimostrativo, da collegare ai dati reali</p></div><span className="period">Esempio</span></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e23b4f" stopOpacity={0.28}/><stop offset="100%" stopColor="#e23b4f" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}} width={32}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="value" stroke="#f04456" strokeWidth={2.5} fill="url(#fill)"/></AreaChart></ResponsiveContainer></div></div>
+            <div className="panel import-panel"><div className="panel-heading"><div><h2>Importa le tue attività</h2><p>Gestisci il tuo archivio sportivo</p></div><Upload size={19}/></div><div className="integration-foot">Puoi registrare manualmente un allenamento oppure importare file GPX, TCX e FIT dalla schermata di registrazione.</div></div>
           </section>}
+          {active==='Panoramica' && <CalendarPage activities={activities} userId={session.user.id}/>}
           <section className="panel activity-panel">
-            <div className="panel-heading activity-heading"><div><h2>{active==='Panoramica'?'Attività recenti':active==='Calendario'?'Storico attività':active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
+            <div className="panel-heading activity-heading"><div><h2>{active==='Panoramica'?'Attività recenti':active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
             {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{filtered.length ? filtered.map(a=><ActivityRow key={a.id} item={a} onEdit={openEditActivity} onDelete={deleteActivity} onDetails={setDetailActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
             <div className="panel-footer">Visualizzate {filtered.length} attività <button onClick={()=>setActive('Registro attività')}>Apri registro completo <ChevronRight size={15}/></button></div>
           </section>
@@ -550,25 +561,14 @@ function GymPage({userId}) {
   const latestWeight = [...exerciseProgress].reverse().find(item=>item.maxWeight != null)?.maxWeight ?? null;
   return <div className="gym-page">
     {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
-        {garminSyncReport && <section className="panel garmin-sync-report">
-          <div className="panel-heading"><div><h2>Riepilogo sincronizzazione Garmin</h2><p>Dati effettivamente presenti nelle attività sincronizzate</p></div><span className="status-active">Completata</span></div>
-          <div className="garmin-report-grid">
-            <div><strong>{garminSyncReport.imported}</strong><span>Attività sincronizzate</span></div>
-            <div><strong>{garminSyncReport.checkedForDetails}</strong><span>Attività analizzate</span></div>
-            <div><strong>{garminSyncReport.enriched}</strong><span>Attività arricchite</span></div>
-            <div><strong>{garminSyncReport.heartRateActivities}</strong><span>Con frequenza cardiaca</span></div>
-            <div><strong>{garminSyncReport.elevationActivities}</strong><span>Con dislivello</span></div>
-            <div><strong>{garminSyncReport.gpsTracks}</strong><span>Tracce GPS</span></div>
-            <div><strong>{garminSyncReport.elevationProfiles}</strong><span>Profili altimetrici</span></div>
-          </div>
-        </section>}
+        
     <div className="gym-intro panel"><div><div className="eyebrow">ALLENAMENTO CON I PESI</div><h2>Il tuo diario palestra</h2><p>Registra esercizi, serie, ripetizioni, carichi e recuperi. I dati vengono salvati nel tuo archivio personale.</p></div><button className="primary-button" onClick={openForm}><Plus size={17}/> Nuovo allenamento</button></div>
     <div className="gym-summary"><div className="stat-card"><div className="stat-top"><span>Allenamenti</span><Dumbbell size={18}/></div><strong>{sessions.length}</strong><small>Sessioni registrate</small></div><div className="stat-card"><div className="stat-top"><span>Serie registrate</span><Activity size={18}/></div><strong>{totalSets}</strong><small>Totale serie nello storico</small></div></div>
     <section className="panel gym-progress">
       <div className="panel-heading gym-progress-heading"><div><h2>Progressione dei carichi</h2><p>Confronta il carico massimo e il volume per ogni esercizio</p></div><label className="progress-select-label">Esercizio<select value={currentExercise} onChange={e=>setSelectedExercise(e.target.value)} disabled={!exerciseNames.length}>{exerciseNames.length ? exerciseNames.map(name=><option key={name} value={name}>{name}</option>) : <option>Nessun esercizio</option>}</select></label></div>
       {!exerciseNames.length ? <div className="empty">Registra almeno un esercizio con un carico per iniziare a vedere la progressione.</div> : <>
         <div className="progress-kpis"><div><small>Miglior carico registrato</small><strong>{bestWeight ? `${bestWeight.toLocaleString('it-IT')} kg` : '—'}</strong></div><div><small>Ultimo carico massimo</small><strong>{latestWeight == null ? '—' : `${latestWeight.toLocaleString('it-IT')} kg`}</strong></div><div><small>Sessioni con questo esercizio</small><strong>{exerciseProgress.length}</strong></div></div>
-        <div className="progress-charts"><div className="progress-chart-card"><div className="progress-chart-title"><b>Carico massimo per sessione</b><span>kg</span></div>{exerciseProgress.some(item=>item.maxWeight!==null) ? <div className="progress-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={exerciseProgress}><defs><linearGradient id="gymLoadFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#829aff" stopOpacity={0.3}/><stop offset="100%" stopColor="#829aff" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}} width={38}/><Tooltip labelFormatter={(_,payload)=>payload?.[0]?.payload?.date ? new Date(payload[0].payload.date+'T12:00:00').toLocaleDateString('it-IT') : ''} formatter={value=>[`${value} kg`,'Carico massimo']} contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="maxWeight" stroke="#829aff" strokeWidth={2.5} fill="url(#gymLoadFill)" connectNulls/></AreaChart></ResponsiveContainer></div> : <div className="empty">Per questo esercizio non sono ancora stati inseriti carichi.</div>}</div>
+        <div className="progress-charts"><div className="progress-chart-card"><div className="progress-chart-title"><b>Carico massimo per sessione</b><span>kg</span></div>{exerciseProgress.some(item=>item.maxWeight!==null) ? <div className="progress-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={exerciseProgress}><defs><linearGradient id="gymLoadFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f04456" stopOpacity={0.3}/><stop offset="100%" stopColor="#f04456" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}} width={38}/><Tooltip labelFormatter={(_,payload)=>payload?.[0]?.payload?.date ? new Date(payload[0].payload.date+'T12:00:00').toLocaleDateString('it-IT') : ''} formatter={value=>[`${value} kg`,'Carico massimo']} contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="maxWeight" stroke="#f04456" strokeWidth={2.5} fill="url(#gymLoadFill)" connectNulls/></AreaChart></ResponsiveContainer></div> : <div className="empty">Per questo esercizio non sono ancora stati inseriti carichi.</div>}</div>
         <div className="progress-chart-card"><div className="progress-chart-title"><b>Volume per sessione</b><span>kg × ripetizioni</span></div><div className="progress-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={exerciseProgress}><defs><linearGradient id="gymVolumeFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#52c7ae" stopOpacity={0.28}/><stop offset="100%" stopColor="#52c7ae" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:11}} width={38}/><Tooltip formatter={value=>[`${Number(value).toLocaleString('it-IT')} kg·rip.`,'Volume']} contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="volume" stroke="#52c7ae" strokeWidth={2.5} fill="url(#gymVolumeFill)"/></AreaChart></ResponsiveContainer></div></div></div>
         <p className="progress-note">Il carico massimo è il peso più alto registrato in una serie di quella sessione. Il volume è calcolato sommando carico × ripetizioni; le serie senza carico o ripetizioni contribuiscono zero.</p>
       </>}
@@ -727,7 +727,7 @@ function StatisticsPage({activities,userId}) {
     </section>
     <section className="statistics-grid">
       <div className="panel statistics-chart-panel"><div className="panel-heading"><div><h2>Tempo di allenamento</h2><p>Minuti registrati per giornata</p></div><span className="period">{rangeLabel}</span></div>
-        {chartData.length?<div className="statistics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><defs><linearGradient id="statsDurationFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#829aff" stopOpacity={0.3}/><stop offset="100%" stopColor="#829aff" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}} width={35}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}} formatter={v=>[`${Math.round(v)} min`,'Durata']}/><Area type="monotone" dataKey="minutes" stroke="#829aff" strokeWidth={2.5} fill="url(#statsDurationFill)"/></AreaChart></ResponsiveContainer></div>:<div className="empty">Nessuna attività con durata nel periodo selezionato.</div>}
+        {chartData.length?<div className="statistics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><defs><linearGradient id="statsDurationFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f04456" stopOpacity={0.3}/><stop offset="100%" stopColor="#f04456" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}} width={35}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}} formatter={v=>[`${Math.round(v)} min`,'Durata']}/><Area type="monotone" dataKey="minutes" stroke="#f04456" strokeWidth={2.5} fill="url(#statsDurationFill)"/></AreaChart></ResponsiveContainer></div>:<div className="empty">Nessuna attività con durata nel periodo selezionato.</div>}
       </div>
       <div className="panel statistics-chart-panel"><div className="panel-heading"><div><h2>Volume palestra</h2><p>Kg × ripetizioni per giornata</p></div><span className="period">{rangeLabel}</span></div>
         {filteredWorkouts.length?<div className="statistics-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}} width={42}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}} formatter={v=>[`${Math.round(v).toLocaleString('it-IT')} kg`,'Volume']}/><Bar dataKey="volume" fill="#e9a77f" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div>:<div className="empty">Nessuna sessione palestra nel periodo selezionato.</div>}
@@ -749,13 +749,13 @@ function ActivityDetails({activity,onClose}) {
     if(!activity.route || activity.route.length<2 || !mapRef.current) return;
     const map=L.map(mapRef.current,{scrollWheelZoom:false});
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:19}).addTo(map);
-    const line=L.polyline(activity.route.map(p=>[p.lat,p.lng]),{color:'#829aff',weight:4}).addTo(map);
+    const line=L.polyline(activity.route.map(p=>[p.lat,p.lng]),{color:'#f04456',weight:4}).addTo(map);
     map.fitBounds(line.getBounds(),{padding:[18,18]});
     return ()=>map.remove();
   },[activity]);
   const speedLabel=activity.type==='Running'?'Ritmo medio':'Velocità media';
-  const speedValue=activity.speedAvg==null?'—':activity.type==='Running'?`${activity.speedAvg} min/km`:`${activity.speedAvg} km/h`;
-  return <div className="modal-backdrop" onClick={onClose}><div className="modal activity-detail-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">DETTAGLIO ATTIVITÀ</div><h2>{activity.title}</h2></div><button type="button" className="icon-button" onClick={onClose}>✕</button></div><div className="detail-metrics"><Stat icon={Clock3} label="Durata" value={activity.duration} foot=""/><Stat icon={Activity} label="Distanza" value={activity.distance} foot=""/><Stat icon={Gauge} label="FC media / max" value={activity.heartRateAvg==null?'—':`${activity.heartRateAvg} / ${activity.heartRateMax??'—'} bpm`} foot=""/><Stat icon={Waves} label="Dislivello + / −" value={`${activity.elevation==='—'?'—':activity.elevation} / ${activity.elevationLoss??'—'} m`} foot=""/></div><div className="detail-line"><b>{speedLabel}</b><span>{speedValue}</span></div>{activity.speedMax!=null&&<div className="detail-line"><b>{activity.type==='Running'?'Ritmo/velocità max.':'Velocità massima'}</b><span>{activity.speedMax} {activity.type==='Running'?'':'km/h'}</span></div>}{activity.route?.length>1?<><h3>Percorso GPS</h3><div ref={mapRef} className="activity-map"/><small className="field-hint">Mappa © OpenStreetMap · tracciato importato da GPX</small></>:<div className="empty">Nessun percorso GPS associato. Puoi importare un file GPX modificando l'attività.</div>}</div></div>;
+  const speedValue=activity.speedAvg==null?'—':activity.type==='Running'?`${activity.speedAvg} min/km`:`${formatMetric(activity.speedAvg)} km/h`;
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal activity-detail-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">DETTAGLIO ATTIVITÀ</div><h2>{activity.title}</h2></div><button type="button" className="icon-button" onClick={onClose}>✕</button></div><div className="detail-metrics"><Stat icon={Clock3} label="Durata" value={activity.duration} foot=""/><Stat icon={Activity} label="Distanza" value={activity.distance} foot=""/><Stat icon={Gauge} label="FC media / max" value={activity.heartRateAvg==null?'—':`${activity.heartRateAvg} / ${activity.heartRateMax??'—'} bpm`} foot=""/><Stat icon={Waves} label="Dislivello + / −" value={`${activity.elevation==='—'?'—':activity.elevation} / ${activity.elevationLoss??'—'} m`} foot=""/></div><div className="detail-line"><b>{speedLabel}</b><span>{speedValue}</span></div>{activity.speedMax!=null&&<div className="detail-line"><b>{activity.type==='Running'?'Ritmo/velocità max.':'Velocità massima'}</b><span>{activity.type==='Running'?activity.speedMax:`${formatMetric(activity.speedMax)} km/h`}</span></div>}{activity.route?.length>1?<><h3>Percorso GPS</h3><div ref={mapRef} className="activity-map"/><small className="field-hint">Mappa © OpenStreetMap · tracciato importato da GPX</small></>:<div className="empty">Nessun percorso GPS associato. Puoi importare un file GPX modificando l'attività.</div>}</div></div>;
 }
 
 function SettingsPage({email}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin</b><small>Importazione delle attività tramite Garmin Connect</small></div><span className="status-active">Configurata</span></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
