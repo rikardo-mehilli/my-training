@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
-import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2 } from 'lucide-react';
+import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './style.css';
 
@@ -90,7 +90,9 @@ function App() {
   const [activities, setActivities] = useState([]);
   const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({title:'',type:'Running',date:new Date().toISOString().slice(0,10),duration:'',distance:''});
+  const [editingId, setEditingId] = useState(null);
+  const emptyForm = () => ({title:'',type:'Running',date:new Date().toISOString().slice(0,10),duration:'',distance:''});
+  const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -122,26 +124,35 @@ function App() {
     `${a.title} ${a.type} ${a.source}`.toLowerCase().includes(query.toLowerCase())
   ), [activities, active, query]);
 
-  async function addActivity(e) {
+  function openNewActivity() { setEditingId(null); setForm(emptyForm()); setShowForm(true); }
+
+  function openEditActivity(activity) {
+    const distance = activity.distance === '—' ? '' : String(numberFrom(activity.distance) ?? '');
+    setEditingId(activity.id);
+    setForm({title:activity.title, type:activity.type, date:activity.date, duration:activity.duration === '—' ? '' : activity.duration, distance});
+    setShowForm(true);
+  }
+
+  async function saveActivity(e) {
     e.preventDefault(); setSaving(true); setError(''); setNotice('');
     const km = numberFrom(form.distance);
     const payload = {
-      user_id: session.user.id,
-      source: 'manual',
       activity_type: form.type,
       title: form.title.trim(),
       started_at: new Date(`${form.date}T12:00:00`).toISOString(),
       duration_seconds: durationToSeconds(form.duration),
       distance_meters: form.type === 'Palestra' || km === null ? null : km * 1000
     };
-    const {data, error} = await supabase.from('activities').insert(payload).select().single();
-    if (error) setError(`Salvataggio non riuscito: ${error.message}`);
+    const result = editingId
+      ? await supabase.from('activities').update(payload).eq('id', editingId).select().single()
+      : await supabase.from('activities').insert({...payload, user_id:session.user.id, source:'manual'}).select().single();
+    if (result.error) setError(`${editingId ? 'Modifica' : 'Salvataggio'} non riuscita: ${result.error.message}`);
     else {
-      setActivities(previous => [fromDatabase(data), ...previous]);
-      setShowForm(false);
-      setForm({title:'',type:'Running',date:new Date().toISOString().slice(0,10),duration:'',distance:''});
+      const updated = fromDatabase(result.data);
+      setActivities(previous => editingId ? previous.map(a => a.id === editingId ? updated : a).sort((a,b)=>b.date.localeCompare(a.date)) : [updated, ...previous]);
+      setShowForm(false); setEditingId(null); setForm(emptyForm());
       setActive('Registro attività');
-      setNotice('Attività salvata nel cloud.');
+      setNotice(editingId ? 'Attività aggiornata nel cloud.' : 'Attività salvata nel cloud.');
     }
     setSaving(false);
   }
@@ -172,7 +183,7 @@ function App() {
     <main className="main">
       <header className="topbar"><div className="breadcrumb">My Training <ChevronRight size={14}/> <b>{active}</b></div><div className="top-actions"><span className="sync"><span className="dot"/> Cloud sincronizzato</span><button className="icon-button" aria-label="Esci" title="Esci" onClick={signOut}><LogOut size={17}/></button></div></header>
       <div className="content">
-        <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div><button className="primary-button" onClick={()=>setShowForm(true)}><Plus size={17}/> Registra attività</button></div>
+        <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div><button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button></div>
         {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
         {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : <>
           <section className="stats-grid">
@@ -187,25 +198,25 @@ function App() {
           </section>}
           <section className="panel activity-panel">
             <div className="panel-heading activity-heading"><div><h2>{active==='Panoramica'?'Attività recenti':active==='Calendario'?'Storico attività':active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
-            {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{filtered.length ? filtered.map(a=><ActivityRow key={a.id} item={a} onDelete={deleteActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
+            {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{filtered.length ? filtered.map(a=><ActivityRow key={a.id} item={a} onEdit={openEditActivity} onDelete={deleteActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
             <div className="panel-footer">Visualizzate {filtered.length} attività <button onClick={()=>setActive('Registro attività')}>Apri registro completo <ChevronRight size={15}/></button></div>
           </section>
         </>}
         <footer>MY TRAINING <span>·</span> Archivio personale su Supabase</footer>
       </div>
     </main>
-    {showForm && <div className="modal-backdrop" onClick={()=>setShowForm(false)}><form className="modal" onSubmit={addActivity} onClick={e=>e.stopPropagation()}>
-      <div className="modal-head"><div><div className="eyebrow">NUOVA REGISTRAZIONE</div><h2>Registra attività</h2></div><button type="button" className="icon-button" onClick={()=>setShowForm(false)}>✕</button></div>
+    {showForm && <div className="modal-backdrop" onClick={()=>setShowForm(false)}><form className="modal" onSubmit={saveActivity} onClick={e=>e.stopPropagation()}>
+      <div className="modal-head"><div><div className="eyebrow">{editingId ? 'MODIFICA REGISTRAZIONE' : 'NUOVA REGISTRAZIONE'}</div><h2>{editingId ? 'Modifica attività' : 'Registra attività'}</h2></div><button type="button" className="icon-button" onClick={()=>setShowForm(false)}>✕</button></div>
       <label>Nome attività<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Es. Corsa al parco"/></label>
       <div className="form-row"><label>Tipologia<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}><option>Running</option><option>Ciclismo</option><option>Palestra</option></select></label><label>Data<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label></div>
       <div className="form-row"><label>Durata<input value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="Es. 45 min oppure 1h 20m"/></label><label>Distanza (km)<input value={form.distance} onChange={e=>setForm({...form,distance:e.target.value})} placeholder="Es. 8,5"/></label></div>
-      <button className="primary-button full" type="submit" disabled={saving}>{saving?'Salvataggio…':'Salva nel cloud'}</button>
+      <button className="primary-button full" type="submit" disabled={saving}>{saving?'Salvataggio…':editingId?'Salva modifiche':'Salva nel cloud'}</button>
     </form></div>}
   </div>;
 }
 function Stat({icon:Icon,label,value,foot}) { return <div className="stat-card"><div className="stat-top"><span>{label}</span><Icon size={18}/></div><strong>{value}</strong><small>{foot}</small></div>; }
 function Integration({name,desc,color}) { return <div className="integration"><div className={`integration-logo ${color}`}>{color==='garmin'?'G':'S'}</div><div className="integration-text"><b>{name}</b><small>{desc}</small></div><span className="not-connected">Non collegato</span></div>; }
-function ActivityRow({item:a,onDelete}) { const Icon=a.icon||Activity; return <div className="activity-row"><div className={`activity-icon ${a.type.toLowerCase()}`}><Icon size={19}/></div><div className="activity-main"><b>{a.title}</b><small>{new Date(a.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'})} <span>·</span> {a.type}</small></div><div className="activity-metric"><b>{a.distance}</b><small>Distanza</small></div><div className="activity-metric"><b>{a.duration}</b><small>Durata</small></div><div className="source-tag">{a.source}</div><button className="delete-button" title="Elimina attività" aria-label="Elimina attività" onClick={()=>onDelete(a.id)}><Trash2 size={16}/></button></div>; }
+function ActivityRow({item:a,onEdit,onDelete}) { const Icon=a.icon||Activity; return <div className="activity-row"><div className={`activity-icon ${a.type.toLowerCase()}`}><Icon size={19}/></div><div className="activity-main"><b>{a.title}</b><small>{new Date(a.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'})} <span>·</span> {a.type}</small></div><div className="activity-metric"><b>{a.distance}</b><small>Distanza</small></div><div className="activity-metric"><b>{a.duration}</b><small>Durata</small></div><div className="source-tag">{a.source}</div><button className="edit-button" title="Modifica attività" aria-label="Modifica attività" onClick={()=>onEdit(a)}><Pencil size={15}/></button><button className="delete-button" title="Elimina attività" aria-label="Elimina attività" onClick={()=>onDelete(a.id)}><Trash2 size={16}/></button></div>; }
 function SettingsPage({email}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin e Strava</b><small>OAuth e importazione da sviluppare</small></div><span className="status-pending">Non attiva</span></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
 
 createRoot(document.getElementById('root')).render(<App/>);
