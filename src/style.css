@@ -48,3 +48,13 @@
 .activity-detail-modal h3{font-size:15px;margin:20px 0 10px}
 .activity-map{height:340px;width:100%;border-radius:12px;overflow:hidden;border:1px solid #2a3850;z-index:0}
 @media(max-width:600px){.detail-metrics{grid-template-columns:1fr}.activity-map{height:260px}}
+
+
+/* Riepilogo sincronizzazione Garmin */
+.garmin-sync-report{display:grid;gap:16px;margin:0 0 17px}
+.garmin-report-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.garmin-report-grid>div{background:#0e1929;border:1px solid #243249;border-radius:9px;padding:13px}
+.garmin-report-grid strong,.garmin-report-grid span{display:block}
+.garmin-report-grid strong{font:700 21px Manrope;color:#edf2fa}
+.garmin-report-grid span{font-size:10px;color:#8290a6;margin-top:5px}
+@media(max-width:700px){.garmin-report-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.garmin-sync-report>.panel-heading{gap:10px}}
