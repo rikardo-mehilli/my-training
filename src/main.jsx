@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
 import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import './style.css';
 
 // La Publishable key è utilizzabile nel frontend. Non inserire qui Secret o service_role.
@@ -22,6 +24,13 @@ function numberFrom(value) {
   const n = Number(String(value).trim().replace(',', '.').replace(/[^\d.-]/g, ''));
   return Number.isFinite(n) ? n : null;
 }
+function paceToSeconds(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const raw=String(value).trim();
+  if (raw.includes(':')) { const [m,sec]=raw.split(':').map(Number); return Number.isFinite(m)&&Number.isFinite(sec)?m*60+sec:null; }
+  const n=numberFrom(raw); return n===null?null:Math.round(n*60);
+}
+function secondsToPace(value) { if(value==null)return ''; const m=Math.floor(Number(value)/60),s=Math.round(Number(value)%60); return `${m}:${String(s).padStart(2,'0')}`; }
 function durationToSeconds(value) {
   if (!value) return null;
   const s = String(value).trim().toLowerCase();
@@ -46,6 +55,10 @@ function fromDatabase(row) {
     duration: secondsToDuration(row.duration_seconds),
     distance: row.distance_meters == null ? '—' : `${(Number(row.distance_meters) / 1000).toLocaleString('it-IT', {maximumFractionDigits:1})} km`,
     elevation: row.elevation_gain_meters == null ? '—' : `${row.elevation_gain_meters} m`,
+    heartRateAvg: row.average_heart_rate, heartRateMax: row.max_heart_rate,
+    speedAvg: row.average_speed == null ? null : (row.activity_type==='Running' ? secondsToPace(row.average_speed) : row.average_speed), speedMax: row.max_speed == null ? null : (row.activity_type==='Running' ? secondsToPace(row.max_speed) : row.max_speed),
+    elevationLoss: row.elevation_loss_meters, route: row.route_geojson || null,
+    elevationProfile: row.elevation_profile || null,
     icon: activityIcon(row.activity_type)
   };
 }
@@ -91,12 +104,13 @@ function App() {
   const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const emptyForm = () => ({title:'',type:'Running',date:new Date().toISOString().slice(0,10),duration:'',distance:''});
+  const emptyForm = () => ({title:'',type:'Running',date:new Date().toISOString().slice(0,10),duration:'',distance:'',heartRateAvg:'',heartRateMax:'',speedAvg:'',speedMax:'',elevation:'',elevationLoss:'',route:[],elevationProfile:[]});
   const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [detailActivity, setDetailActivity] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({data}) => { setSession(data.session); setAuthReady(true); });
@@ -129,7 +143,7 @@ function App() {
   function openEditActivity(activity) {
     const distance = activity.distance === '—' ? '' : String(numberFrom(activity.distance) ?? '');
     setEditingId(activity.id);
-    setForm({title:activity.title, type:activity.type, date:activity.date, duration:activity.duration === '—' ? '' : activity.duration, distance});
+    setForm({title:activity.title, type:activity.type, date:activity.date, duration:activity.duration === '—' ? '' : activity.duration, distance, heartRateAvg:activity.heartRateAvg ?? '', heartRateMax:activity.heartRateMax ?? '', speedAvg:activity.speedAvg ?? '', speedMax:activity.speedMax ?? '', elevation:activity.elevation === '—' ? '' : numberFrom(activity.elevation), elevationLoss:activity.elevationLoss ?? '', route:activity.route || [], elevationProfile:activity.elevationProfile || []});
     setShowForm(true);
   }
 
@@ -141,7 +155,11 @@ function App() {
       title: form.title.trim(),
       started_at: new Date(`${form.date}T12:00:00`).toISOString(),
       duration_seconds: durationToSeconds(form.duration),
-      distance_meters: form.type === 'Palestra' || km === null ? null : km * 1000
+      distance_meters: form.type === 'Palestra' || km === null ? null : km * 1000,
+      average_heart_rate: numberFrom(form.heartRateAvg), max_heart_rate: numberFrom(form.heartRateMax),
+      average_speed: form.type==='Running' ? paceToSeconds(form.speedAvg) : numberFrom(form.speedAvg), max_speed: form.type==='Running' ? paceToSeconds(form.speedMax) : numberFrom(form.speedMax),
+      elevation_gain_meters: numberFrom(form.elevation), elevation_loss_meters: numberFrom(form.elevationLoss),
+      route_geojson: form.route?.length ? form.route : null, elevation_profile: form.elevationProfile?.length ? form.elevationProfile : null
     };
     const result = editingId
       ? await supabase.from('activities').update(payload).eq('id', editingId).select().single()
@@ -198,18 +216,20 @@ function App() {
           </section>}
           <section className="panel activity-panel">
             <div className="panel-heading activity-heading"><div><h2>{active==='Panoramica'?'Attività recenti':active==='Calendario'?'Storico attività':active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
-            {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{filtered.length ? filtered.map(a=><ActivityRow key={a.id} item={a} onEdit={openEditActivity} onDelete={deleteActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
+            {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{filtered.length ? filtered.map(a=><ActivityRow key={a.id} item={a} onEdit={openEditActivity} onDelete={deleteActivity} onDetails={setDetailActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
             <div className="panel-footer">Visualizzate {filtered.length} attività <button onClick={()=>setActive('Registro attività')}>Apri registro completo <ChevronRight size={15}/></button></div>
           </section>
         </>}
         <footer>MY TRAINING <span>·</span> Archivio personale su Supabase</footer>
       </div>
     </main>
+    {detailActivity && <ActivityDetails activity={detailActivity} onClose={()=>setDetailActivity(null)}/> }
     {showForm && <div className="modal-backdrop" onClick={()=>setShowForm(false)}><form className="modal" onSubmit={saveActivity} onClick={e=>e.stopPropagation()}>
       <div className="modal-head"><div><div className="eyebrow">{editingId ? 'MODIFICA REGISTRAZIONE' : 'NUOVA REGISTRAZIONE'}</div><h2>{editingId ? 'Modifica attività' : 'Registra attività'}</h2></div><button type="button" className="icon-button" onClick={()=>setShowForm(false)}>✕</button></div>
       <label>Nome attività<input required value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Es. Corsa al parco"/></label>
       <div className="form-row"><label>Tipologia<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}><option>Running</option><option>Ciclismo</option><option>Palestra</option></select></label><label>Data<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label></div>
       <div className="form-row"><label>Durata<input value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="Es. 45 min oppure 1h 20m"/></label><label>Distanza (km)<input value={form.distance} onChange={e=>setForm({...form,distance:e.target.value})} placeholder="Es. 8,5"/></label></div>
+      {form.type !== 'Palestra' && <><div className="form-section-label">DATI CARDIO</div><div className="form-row"><label>FC media (bpm)<input type="number" min="0" value={form.heartRateAvg} onChange={e=>setForm({...form,heartRateAvg:e.target.value})}/></label><label>FC massima (bpm)<input type="number" min="0" value={form.heartRateMax} onChange={e=>setForm({...form,heartRateMax:e.target.value})}/></label></div><div className="form-row"><label>{form.type==='Running'?'Ritmo medio (min/km)':'Velocità media (km/h)'}<input value={form.speedAvg} onChange={e=>setForm({...form,speedAvg:e.target.value})} placeholder={form.type==='Running'?'Es. 5:30':'Es. 27,5'}/></label><label>{form.type==='Running'?'Ritmo/velocità max. (opzionale)':'Velocità massima (km/h)'}<input value={form.speedMax} onChange={e=>setForm({...form,speedMax:e.target.value})}/></label></div><div className="form-row"><label>Dislivello positivo (m)<input type="number" min="0" value={form.elevation} onChange={e=>setForm({...form,elevation:e.target.value})}/></label><label>Dislivello negativo (m)<input type="number" min="0" value={form.elevationLoss} onChange={e=>setForm({...form,elevationLoss:e.target.value})}/></label></div><label>Importa percorso GPS (file GPX)<input type="file" accept=".gpx,application/gpx+xml" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const txt=await file.text();const xml=new DOMParser().parseFromString(txt,'application/xml');const pts=[...xml.querySelectorAll('trkpt, rtept')].map(pt=>({lat:Number(pt.getAttribute('lat')),lng:Number(pt.getAttribute('lon')),ele:Number(pt.querySelector('ele')?.textContent)||null})).filter(pt=>Number.isFinite(pt.lat)&&Number.isFinite(pt.lng));if(pts.length<2)throw new Error('Il file GPX non contiene un tracciato valido.');setForm(prev=>({...prev,route:pts,elevationProfile:pts.filter(pt=>pt.ele!==null).map(pt=>({distance:0,elevation:pt.ele}))}));setNotice(`Percorso GPX caricato: ${pts.length} punti.`);}catch(err){setError(err.message||'Impossibile leggere il file GPX.');}}}/>{form.route?.length>0&&<small className="field-hint">Percorso caricato: {form.route.length} punti GPS</small>}</label></>}
       <button className="primary-button full" type="submit" disabled={saving}>{saving?'Salvataggio…':editingId?'Salva modifiche':'Salva nel cloud'}</button>
     </form></div>}
   </div>;
@@ -224,6 +244,7 @@ function GymPage({userId}) {
   const [originalSetIds, setOriginalSetIds] = useState([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [detailActivity, setDetailActivity] = useState(null);
   const emptySet = () => ({id:null, exercise_name:'', set_number:1, reps:'', weight_kg:'', rest_seconds:'', notes:''});
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
@@ -511,7 +532,23 @@ function StatisticsPage({activities,userId}) {
 
 function Stat({icon:Icon,label,value,foot}) { return <div className="stat-card"><div className="stat-top"><span>{label}</span><Icon size={18}/></div><strong>{value}</strong><small>{foot}</small></div>; }
 function Integration({name,desc,color}) { return <div className="integration"><div className={`integration-logo ${color}`}>{color==='garmin'?'G':'S'}</div><div className="integration-text"><b>{name}</b><small>{desc}</small></div><span className="not-connected">Non collegato</span></div>; }
-function ActivityRow({item:a,onEdit,onDelete}) { const Icon=a.icon||Activity; return <div className="activity-row"><div className={`activity-icon ${a.type.toLowerCase()}`}><Icon size={19}/></div><div className="activity-main"><b>{a.title}</b><small>{new Date(a.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'})} <span>·</span> {a.type}</small></div><div className="activity-metric"><b>{a.distance}</b><small>Distanza</small></div><div className="activity-metric"><b>{a.duration}</b><small>Durata</small></div><div className="source-tag">{a.source}</div><button className="edit-button" title="Modifica attività" aria-label="Modifica attività" onClick={()=>onEdit(a)}><Pencil size={15}/></button><button className="delete-button" title="Elimina attività" aria-label="Elimina attività" onClick={()=>onDelete(a.id)}><Trash2 size={16}/></button></div>; }
+function ActivityRow({item:a,onEdit,onDelete,onDetails}) { const Icon=a.icon||Activity; return <div className="activity-row"><div className={`activity-icon ${a.type.toLowerCase()}`}><Icon size={19}/></div><div className="activity-main"><b>{a.title}</b><small>{new Date(a.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'})} <span>·</span> {a.type}</small></div><div className="activity-metric"><b>{a.distance}</b><small>Distanza</small></div><div className="activity-metric"><b>{a.duration}</b><small>Durata</small></div><div className="source-tag">{a.source}</div><button className="edit-button" title="Dettagli attività" aria-label="Dettagli attività" onClick={()=>onDetails(a)}><Search size={15}/></button><button className="edit-button" title="Modifica attività" aria-label="Modifica attività" onClick={()=>onEdit(a)}><Pencil size={15}/></button><button className="delete-button" title="Elimina attività" aria-label="Elimina attività" onClick={()=>onDelete(a.id)}><Trash2 size={16}/></button></div>; }
+
+function ActivityDetails({activity,onClose}) {
+  const mapRef=React.useRef(null);
+  useEffect(()=>{
+    if(!activity.route || activity.route.length<2 || !mapRef.current) return;
+    const map=L.map(mapRef.current,{scrollWheelZoom:false});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors',maxZoom:19}).addTo(map);
+    const line=L.polyline(activity.route.map(p=>[p.lat,p.lng]),{color:'#829aff',weight:4}).addTo(map);
+    map.fitBounds(line.getBounds(),{padding:[18,18]});
+    return ()=>map.remove();
+  },[activity]);
+  const speedLabel=activity.type==='Running'?'Ritmo medio':'Velocità media';
+  const speedValue=activity.speedAvg==null?'—':activity.type==='Running'?`${activity.speedAvg} min/km`:`${activity.speedAvg} km/h`;
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal activity-detail-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">DETTAGLIO ATTIVITÀ</div><h2>{activity.title}</h2></div><button type="button" className="icon-button" onClick={onClose}>✕</button></div><div className="detail-metrics"><Stat icon={Clock3} label="Durata" value={activity.duration} foot=""/><Stat icon={Activity} label="Distanza" value={activity.distance} foot=""/><Stat icon={Gauge} label="FC media / max" value={activity.heartRateAvg==null?'—':`${activity.heartRateAvg} / ${activity.heartRateMax??'—'} bpm`} foot=""/><Stat icon={Waves} label="Dislivello + / −" value={`${activity.elevation==='—'?'—':activity.elevation} / ${activity.elevationLoss??'—'} m`} foot=""/></div><div className="detail-line"><b>{speedLabel}</b><span>{speedValue}</span></div>{activity.speedMax!=null&&<div className="detail-line"><b>{activity.type==='Running'?'Ritmo/velocità max.':'Velocità massima'}</b><span>{activity.speedMax} {activity.type==='Running'?'':'km/h'}</span></div>}{activity.route?.length>1?<><h3>Percorso GPS</h3><div ref={mapRef} className="activity-map"/><small className="field-hint">Mappa © OpenStreetMap · tracciato importato da GPX</small></>:<div className="empty">Nessun percorso GPS associato. Puoi importare un file GPX modificando l'attività.</div>}</div></div>;
+}
+
 function SettingsPage({email}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin e Strava</b><small>OAuth e importazione da sviluppare</small></div><span className="status-pending">Non attiva</span></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
 
 createRoot(document.getElementById('root')).render(<App/>);
