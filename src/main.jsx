@@ -52,7 +52,7 @@ function activityIcon(type) {
 function fromDatabase(row) {
   return {
     id: row.id, date: row.started_at.slice(0, 10), type: row.activity_type, title: row.title,
-    source: row.source === 'manual' ? 'Manuale' : row.source,
+    source: row.source === 'manual' ? 'Manuale' : row.source === 'garmin' ? 'Garmin' : row.source,
     duration: secondsToDuration(row.duration_seconds),
     distance: row.distance_meters == null ? '—' : `${(Number(row.distance_meters) / 1000).toLocaleString('it-IT', {maximumFractionDigits:1})} km`,
     elevation: row.elevation_gain_meters == null ? '—' : `${row.elevation_gain_meters} m`,
@@ -209,6 +209,7 @@ function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [detailActivity, setDetailActivity] = useState(null);
+  const [garminSyncing, setGarminSyncing] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({data}) => { setSession(data.session); setAuthReady(true); });
@@ -306,6 +307,48 @@ function App() {
     if (error) setError(`Eliminazione non riuscita: ${error.message}`);
     else { setActivities(previous => previous.filter(a => a.id !== id)); setNotice('Attività eliminata.'); }
   }
+  async function syncGarmin() {
+    setGarminSyncing(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const { data, error } = await supabase.functions.invoke('garmin-sync', {
+        method: 'POST',
+      });
+
+      if (error) {
+        let message = error.message || 'Errore nella chiamata alla funzione Garmin.';
+        try {
+          const details = await error.context?.json?.();
+          if (details?.error) message = details.error;
+          if (details?.details) message += `: ${details.details}`;
+        } catch (_) {
+          // Mantiene il messaggio originale se la risposta non contiene JSON.
+        }
+        throw new Error(message);
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.error || 'Sincronizzazione Garmin non riuscita.');
+      }
+
+      const { data: rows, error: loadError } = await supabase
+        .from('activities')
+        .select('*')
+        .order('started_at', { ascending: false });
+
+      if (loadError) throw loadError;
+
+      setActivities((rows || []).map(fromDatabase));
+      setNotice(data.message || `Sincronizzazione Garmin completata: ${data.imported ?? 0} attività.`);
+    } catch (err) {
+      setError(err.message || 'Errore durante la sincronizzazione Garmin.');
+    } finally {
+      setGarminSyncing(false);
+    }
+  }
+
   async function signOut() { await supabase.auth.signOut(); setActive('Panoramica'); }
 
   if (!authReady) return <div className="auth-screen"><div className="auth-card">Caricamento…</div></div>;
@@ -336,7 +379,14 @@ function App() {
           </section>
           {active==='Panoramica' && <section className="two-col">
             <div className="panel chart-panel"><div className="panel-heading"><div><h2>Attività della settimana</h2><p>Grafico dimostrativo, da collegare ai dati reali</p></div><span className="period">Esempio</span></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6d8cff" stopOpacity={0.28}/><stop offset="100%" stopColor="#6d8cff" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}} width={32}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="value" stroke="#829aff" strokeWidth={2.5} fill="url(#fill)"/></AreaChart></ResponsiveContainer></div></div>
-            <div className="panel import-panel"><div className="panel-heading"><div><h2>Collega le piattaforme</h2><p>Importa le tue attività sportive</p></div><Upload size={19}/></div><Integration name="Garmin Connect" desc="Integrazione da sviluppare" color="garmin"/><Integration name="Strava" desc="Integrazione da sviluppare" color="strava"/><div className="integration-foot">Le connessioni Garmin e Strava non sono ancora attive.</div></div>
+            <div className="panel import-panel"><div className="panel-heading"><div><h2>Collega le piattaforme</h2><p>Importa le tue attività sportive</p></div><Upload size={19}/></div><div className="integration">
+              <div className="integration-logo garmin">G</div>
+              <div className="integration-text"><b>Garmin Connect</b><small>Importa le attività nel tuo archivio</small></div>
+              <button className="secondary-button" onClick={syncGarmin} disabled={garminSyncing}>
+                {garminSyncing ? 'Sincronizzazione…' : 'Sincronizza'}
+              </button>
+            </div>
+            <div className="integration-foot">Sincronizzazione personale tramite Garmin Connect.</div></div>
           </section>}
           <section className="panel activity-panel">
             <div className="panel-heading activity-heading"><div><h2>{active==='Panoramica'?'Attività recenti':active==='Calendario'?'Storico attività':active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
@@ -650,7 +700,7 @@ function StatisticsPage({activities,userId}) {
     </section>
     <section className="panel statistics-breakdown"><div className="panel-heading"><div><h2>Attività per tipologia</h2><p>Distribuzione nel periodo selezionato</p></div></div><div className="statistics-type-list">{byType.map(item=><div className="statistics-type-row" key={item.name}><span className={`statistics-type-dot ${item.color}`}/><b>{item.name}</b><span>{item.count} {item.count===1?'sessione':'sessioni'}</span>{item.distance>0&&<strong>{item.distance.toLocaleString('it-IT',{maximumFractionDigits:1})} km</strong>}</div>)}</div></section>
     {loading&&<div className="statistics-loading">Aggiornamento dati palestra…</div>}
-    <p className="statistics-footnote">Le statistiche riflettono esclusivamente i dati registrati in My Training. Le attività importate da Garmin e Strava non sono ancora collegate.</p>
+    <p className="statistics-footnote">Le statistiche riflettono i dati registrati manualmente e le attività sincronizzate da Garmin.</p>
   </div>;
 }
 
@@ -673,6 +723,6 @@ function ActivityDetails({activity,onClose}) {
   return <div className="modal-backdrop" onClick={onClose}><div className="modal activity-detail-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">DETTAGLIO ATTIVITÀ</div><h2>{activity.title}</h2></div><button type="button" className="icon-button" onClick={onClose}>✕</button></div><div className="detail-metrics"><Stat icon={Clock3} label="Durata" value={activity.duration} foot=""/><Stat icon={Activity} label="Distanza" value={activity.distance} foot=""/><Stat icon={Gauge} label="FC media / max" value={activity.heartRateAvg==null?'—':`${activity.heartRateAvg} / ${activity.heartRateMax??'—'} bpm`} foot=""/><Stat icon={Waves} label="Dislivello + / −" value={`${activity.elevation==='—'?'—':activity.elevation} / ${activity.elevationLoss??'—'} m`} foot=""/></div><div className="detail-line"><b>{speedLabel}</b><span>{speedValue}</span></div>{activity.speedMax!=null&&<div className="detail-line"><b>{activity.type==='Running'?'Ritmo/velocità max.':'Velocità massima'}</b><span>{activity.speedMax} {activity.type==='Running'?'':'km/h'}</span></div>}{activity.route?.length>1?<><h3>Percorso GPS</h3><div ref={mapRef} className="activity-map"/><small className="field-hint">Mappa © OpenStreetMap · tracciato importato da GPX</small></>:<div className="empty">Nessun percorso GPS associato. Puoi importare un file GPX modificando l'attività.</div>}</div></div>;
 }
 
-function SettingsPage({email}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin e Strava</b><small>OAuth e importazione da sviluppare</small></div><span className="status-pending">Non attiva</span></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
+function SettingsPage({email}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin</b><small>Importazione delle attività tramite Garmin Connect</small></div><span className="status-active">Configurata</span></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
 
 createRoot(document.getElementById('root')).render(<App/>);
