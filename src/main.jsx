@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
 import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil } from 'lucide-react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './style.css';
 
 // La Publishable key è utilizzabile nel frontend. Non inserire qui Secret o service_role.
@@ -185,7 +185,7 @@ function App() {
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{active!=='Palestra' && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
         {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
-        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Calendario' ? <CalendarPage activities={activities} userId={session.user.id}/> : <>
+        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Calendario' ? <CalendarPage activities={activities} userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
           <section className="stats-grid">
             <Stat icon={Activity} label="Attività registrate" value={activities.length} foot="Nel tuo archivio cloud"/>
             <Stat icon={Clock3} label="Tempo registrato" value={secondsToDuration(totalSeconds)} foot="Totale delle attività"/>
@@ -421,6 +421,91 @@ function CalendarPage({activities,userId}) {
     <section className="panel calendar-detail"><div className="panel-heading"><div><h2>{new Date(selected+'T12:00:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2><p>Attività registrate in questa giornata</p></div><span className="period">{selectedEvents.length} {selectedEvents.length===1?'attività':'attività'}</span></div>
       {selectedEvents.length===0?<div className="empty">Nessun allenamento registrato in questa giornata.</div>:<div className="calendar-event-list">{selectedEvents.map(event=><article className="calendar-detail-event" key={event.id}><span className={`calendar-detail-icon ${event.type==='Running'?'running-event':event.type==='Ciclismo'?'cycling-event':event.type==='Palestra'?'gym-event':'other-event'}`}>{event.type==='Running'?<Footprints size={18}/>:event.type==='Ciclismo'?<Bike size={18}/>:event.type==='Palestra'?<Dumbbell size={18}/>:<Activity size={18}/>}</span><div><b>{event.title}</b><small>{event.type}{event.detail?` · ${event.detail}`:''}</small></div><span className="calendar-source">{event.kind==='workout'?'Diario palestra':'Registro attività'}</span></article>)}</div>}
     </section>
+  </div>;
+}
+
+
+function StatisticsPage({activities,userId}) {
+  const [period,setPeriod]=useState('month');
+  const [customStart,setCustomStart]=useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10));
+  const [customEnd,setCustomEnd]=useState(()=>new Date().toISOString().slice(0,10));
+  const [workouts,setWorkouts]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState('');
+
+  useEffect(()=>{
+    let cancelled=false;
+    async function load(){
+      setLoading(true);setError('');
+      const {data,error}=await supabase.from('workout_sessions')
+        .select('id,title,performed_at,workout_sets(id,exercise_name,reps,weight_kg)')
+        .order('performed_at',{ascending:false});
+      if(cancelled)return;
+      if(error)setError(`Impossibile caricare i dati palestra: ${error.message}`);
+      else setWorkouts(data||[]);
+      setLoading(false);
+    }
+    load();return()=>{cancelled=true;};
+  },[userId]);
+
+  const today=new Date();
+  const range=useMemo(()=>{
+    const end=new Date(today.getFullYear(),today.getMonth(),today.getDate());
+    let start=new Date(end);
+    if(period==='week'){start.setDate(start.getDate()-((start.getDay()+6)%7));}
+    else if(period==='month'){start=new Date(end.getFullYear(),end.getMonth(),1);}
+    else if(period==='year'){start=new Date(end.getFullYear(),0,1);}
+    else {start=new Date(`${customStart}T00:00:00`);end.setTime(new Date(`${customEnd}T23:59:59`).getTime());}
+    return {start,end};
+  },[period,customStart,customEnd]);
+  const inRange=(value)=>{const d=new Date(`${String(value).slice(0,10)}T12:00:00`);return d>=range.start&&d<=range.end;};
+  const filteredActivities=activities.filter(a=>inRange(a.date));
+  const filteredWorkouts=workouts.filter(w=>inRange(w.performed_at));
+  const running=filteredActivities.filter(a=>a.type==='Running');
+  const cycling=filteredActivities.filter(a=>a.type==='Ciclismo');
+  const distanceFor=list=>list.reduce((sum,a)=>sum+(numberFrom(a.distance)||0),0);
+  const durationSeconds=filteredActivities.reduce((sum,a)=>sum+(durationToSeconds(a.duration)||0),0);
+  const elevation=filteredActivities.reduce((sum,a)=>sum+(numberFrom(a.elevation)||0),0);
+  const allSets=filteredWorkouts.flatMap(w=>w.workout_sets||[]);
+  const gymVolume=allSets.reduce((sum,s)=>sum+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0);
+  const totalSessions=filteredActivities.length+filteredWorkouts.length;
+  const byType=[
+    {name:'Running',count:running.length,distance:distanceFor(running),color:'running'},
+    {name:'Ciclismo',count:cycling.length,distance:distanceFor(cycling),color:'cycling'},
+    {name:'Palestra',count:filteredWorkouts.length,distance:0,color:'gym'},
+    {name:'Altre attività',count:filteredActivities.filter(a=>!['Running','Ciclismo','Palestra'].includes(a.type)).length,distance:0,color:'other'}
+  ];
+  const chartData=useMemo(()=>{
+    const map=new Map();
+    const ensure=(key,label)=>{if(!map.has(key))map.set(key,{key,label,minutes:0,volume:0,activities:0});return map.get(key);};
+    filteredActivities.forEach(a=>{const item=ensure(a.date,new Date(a.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));item.minutes+=(durationToSeconds(a.duration)||0)/60;item.activities+=1;});
+    filteredWorkouts.forEach(w=>{const date=w.performed_at.slice(0,10);const item=ensure(date,new Date(date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short'}));item.activities+=1;item.volume+=(w.workout_sets||[]).reduce((sum,s)=>sum+(Number(s.weight_kg)||0)*(Number(s.reps)||0),0);});
+    return [...map.values()].sort((a,b)=>a.key.localeCompare(b.key));
+  },[filteredActivities,filteredWorkouts]);
+  const rangeLabel=period==='week'?'Questa settimana':period==='month'?'Questo mese':period==='year'?'Quest’anno':'Periodo personalizzato';
+  return <div className="statistics-page">
+    {error&&<div className="notice error">{error}</div>}
+    <section className="panel statistics-toolbar"><div><div className="eyebrow">ANALISI DELLE PRESTAZIONI</div><h2>Le tue statistiche</h2><p>Riepilogo basato sulle attività e sugli allenamenti salvati nel cloud.</p></div><div className="statistics-filters"><label>Periodo<select value={period} onChange={e=>setPeriod(e.target.value)}><option value="week">Settimana</option><option value="month">Mese</option><option value="year">Anno</option><option value="custom">Personalizzato</option></select></label>{period==='custom'&&<><label>Dal<input type="date" value={customStart} max={customEnd} onChange={e=>setCustomStart(e.target.value)}/></label><label>Al<input type="date" value={customEnd} min={customStart} onChange={e=>setCustomEnd(e.target.value)}/></label></>}</div></section>
+    <div className="statistics-period-label">{rangeLabel} · {range.start.toLocaleDateString('it-IT')} – {range.end.toLocaleDateString('it-IT')}</div>
+    <section className="stats-grid statistics-kpis">
+      <Stat icon={Activity} label="Allenamenti" value={totalSessions} foot={`${filteredActivities.length} attività + ${filteredWorkouts.length} sessioni palestra`}/>
+      <Stat icon={Clock3} label="Tempo registrato" value={secondsToDuration(durationSeconds)} foot="Durata disponibile nelle attività"/>
+      <Stat icon={Footprints} label="Distanza running" value={`${distanceFor(running).toLocaleString('it-IT',{maximumFractionDigits:1})} km`} foot={`${running.length} sessioni`}/>
+      <Stat icon={Bike} label="Distanza ciclismo" value={`${distanceFor(cycling).toLocaleString('it-IT',{maximumFractionDigits:1})} km`} foot={`${cycling.length} sessioni`}/>
+      <Stat icon={Waves} label="Dislivello positivo" value={`${elevation.toLocaleString('it-IT',{maximumFractionDigits:0})} m`} foot="Solo dove il dato è disponibile"/>
+      <Stat icon={Dumbbell} label="Volume palestra" value={`${gymVolume.toLocaleString('it-IT',{maximumFractionDigits:0})} kg`} foot={`${allSets.length} serie registrate · kg × ripetizioni`}/>
+    </section>
+    <section className="statistics-grid">
+      <div className="panel statistics-chart-panel"><div className="panel-heading"><div><h2>Tempo di allenamento</h2><p>Minuti registrati per giornata</p></div><span className="period">{rangeLabel}</span></div>
+        {chartData.length?<div className="statistics-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><defs><linearGradient id="statsDurationFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#829aff" stopOpacity={0.3}/><stop offset="100%" stopColor="#829aff" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}} width={35}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}} formatter={v=>[`${Math.round(v)} min`,'Durata']}/><Area type="monotone" dataKey="minutes" stroke="#829aff" strokeWidth={2.5} fill="url(#statsDurationFill)"/></AreaChart></ResponsiveContainer></div>:<div className="empty">Nessuna attività con durata nel periodo selezionato.</div>}
+      </div>
+      <div className="panel statistics-chart-panel"><div className="panel-heading"><div><h2>Volume palestra</h2><p>Kg × ripetizioni per giornata</p></div><span className="period">{rangeLabel}</span></div>
+        {filteredWorkouts.length?<div className="statistics-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:10}} width={42}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}} formatter={v=>[`${Math.round(v).toLocaleString('it-IT')} kg`,'Volume']}/><Bar dataKey="volume" fill="#e9a77f" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div>:<div className="empty">Nessuna sessione palestra nel periodo selezionato.</div>}
+      </div>
+    </section>
+    <section className="panel statistics-breakdown"><div className="panel-heading"><div><h2>Attività per tipologia</h2><p>Distribuzione nel periodo selezionato</p></div></div><div className="statistics-type-list">{byType.map(item=><div className="statistics-type-row" key={item.name}><span className={`statistics-type-dot ${item.color}`}/><b>{item.name}</b><span>{item.count} {item.count===1?'sessione':'sessioni'}</span>{item.distance>0&&<strong>{item.distance.toLocaleString('it-IT',{maximumFractionDigits:1})} km</strong>}</div>)}</div></section>
+    {loading&&<div className="statistics-loading">Aggiornamento dati palestra…</div>}
+    <p className="statistics-footnote">Le statistiche riflettono esclusivamente i dati registrati in My Training. Le attività importate da Garmin e Strava non sono ancora collegate.</p>
   </div>;
 }
 
