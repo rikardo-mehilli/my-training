@@ -12,3 +12,6 @@
 .delete-button{border:1px solid #3b3440;background:#2b202b;color:#dba9b1;border-radius:7px;padding:7px;display:grid;place-items:center;cursor:pointer}
 .delete-button:hover{background:#4a2935}.status-active{font-size:9px;color:#9de0c4;background:#203d39;padding:6px 8px;border-radius:6px}
 .primary-button:disabled{opacity:.65;cursor:wait}
+.edit-button{border:1px solid #34445e;background:#1b2a40;color:#aebfff;border-radius:7px;padding:7px;display:grid;place-items:center;cursor:pointer}
+.edit-button:hover{background:#293b59}
+@media(max-width:650px){.edit-button,.delete-button{padding:6px}.activity-row{flex-wrap:wrap}.activity-main{min-width:90px}}
