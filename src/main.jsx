@@ -210,6 +210,7 @@ function App() {
   const [notice, setNotice] = useState('');
   const [detailActivity, setDetailActivity] = useState(null);
   const [garminSyncing, setGarminSyncing] = useState(false);
+  const [garminSyncReport, setGarminSyncReport] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({data}) => { setSession(data.session); setAuthReady(true); });
@@ -311,6 +312,7 @@ function App() {
     setGarminSyncing(true);
     setError('');
     setNotice('');
+    setGarminSyncReport(null);
 
     try {
       const { data, error } = await supabase.functions.invoke('garmin-sync', {
@@ -341,6 +343,15 @@ function App() {
       if (loadError) throw loadError;
 
       setActivities((rows || []).map(fromDatabase));
+      setGarminSyncReport({
+        imported: data.imported ?? 0,
+        checkedForDetails: data.checkedForDetails ?? 0,
+        enriched: data.enriched ?? 0,
+        heartRateActivities: data.heartRateActivities ?? 0,
+        elevationActivities: data.elevationActivities ?? 0,
+        gpsTracks: data.gpsTracks ?? 0,
+        elevationProfiles: data.elevationProfiles ?? 0,
+      });
       setNotice(data.message || `Sincronizzazione Garmin completata: ${data.imported ?? 0} attività.`);
     } catch (err) {
       setError(err.message || 'Errore durante la sincronizzazione Garmin.');
@@ -370,6 +381,18 @@ function App() {
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{active!=='Palestra' && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
         {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
+        {garminSyncReport && <section className="panel garmin-sync-report">
+          <div className="panel-heading"><div><h2>Riepilogo sincronizzazione Garmin</h2><p>Dati effettivamente presenti nelle attività sincronizzate</p></div><span className="status-active">Completata</span></div>
+          <div className="garmin-report-grid">
+            <div><strong>{garminSyncReport.imported}</strong><span>Attività sincronizzate</span></div>
+            <div><strong>{garminSyncReport.checkedForDetails}</strong><span>Attività analizzate</span></div>
+            <div><strong>{garminSyncReport.enriched}</strong><span>Attività arricchite</span></div>
+            <div><strong>{garminSyncReport.heartRateActivities}</strong><span>Con frequenza cardiaca</span></div>
+            <div><strong>{garminSyncReport.elevationActivities}</strong><span>Con dislivello</span></div>
+            <div><strong>{garminSyncReport.gpsTracks}</strong><span>Tracce GPS</span></div>
+            <div><strong>{garminSyncReport.elevationProfiles}</strong><span>Profili altimetrici</span></div>
+          </div>
+        </section>}
         {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Calendario' ? <CalendarPage activities={activities} userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
           <section className="stats-grid">
             <Stat icon={Activity} label="Attività registrate" value={activities.length} foot="Nel tuo archivio cloud"/>
@@ -527,6 +550,18 @@ function GymPage({userId}) {
   const latestWeight = [...exerciseProgress].reverse().find(item=>item.maxWeight != null)?.maxWeight ?? null;
   return <div className="gym-page">
     {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
+        {garminSyncReport && <section className="panel garmin-sync-report">
+          <div className="panel-heading"><div><h2>Riepilogo sincronizzazione Garmin</h2><p>Dati effettivamente presenti nelle attività sincronizzate</p></div><span className="status-active">Completata</span></div>
+          <div className="garmin-report-grid">
+            <div><strong>{garminSyncReport.imported}</strong><span>Attività sincronizzate</span></div>
+            <div><strong>{garminSyncReport.checkedForDetails}</strong><span>Attività analizzate</span></div>
+            <div><strong>{garminSyncReport.enriched}</strong><span>Attività arricchite</span></div>
+            <div><strong>{garminSyncReport.heartRateActivities}</strong><span>Con frequenza cardiaca</span></div>
+            <div><strong>{garminSyncReport.elevationActivities}</strong><span>Con dislivello</span></div>
+            <div><strong>{garminSyncReport.gpsTracks}</strong><span>Tracce GPS</span></div>
+            <div><strong>{garminSyncReport.elevationProfiles}</strong><span>Profili altimetrici</span></div>
+          </div>
+        </section>}
     <div className="gym-intro panel"><div><div className="eyebrow">ALLENAMENTO CON I PESI</div><h2>Il tuo diario palestra</h2><p>Registra esercizi, serie, ripetizioni, carichi e recuperi. I dati vengono salvati nel tuo archivio personale.</p></div><button className="primary-button" onClick={openForm}><Plus size={17}/> Nuovo allenamento</button></div>
     <div className="gym-summary"><div className="stat-card"><div className="stat-top"><span>Allenamenti</span><Dumbbell size={18}/></div><strong>{sessions.length}</strong><small>Sessioni registrate</small></div><div className="stat-card"><div className="stat-top"><span>Serie registrate</span><Activity size={18}/></div><strong>{totalSets}</strong><small>Totale serie nello storico</small></div></div>
     <section className="panel gym-progress">
