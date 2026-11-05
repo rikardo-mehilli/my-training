@@ -220,9 +220,11 @@ function GymPage({userId}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState(null);
+  const [originalSetIds, setOriginalSetIds] = useState([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const emptySet = () => ({exercise_name:'', set_number:1, reps:'', weight_kg:'', rest_seconds:'', notes:''});
+  const emptySet = () => ({id:null, exercise_name:'', set_number:1, reps:'', weight_kg:'', rest_seconds:'', notes:''});
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
   const [notes, setNotes] = useState('');
@@ -240,31 +242,54 @@ function GymPage({userId}) {
   useEffect(() => { loadSessions(); }, [userId]);
 
   function openForm() {
-    setTitle(''); setDate(new Date().toISOString().slice(0,10)); setNotes(''); setSets([emptySet()]); setError(''); setNotice(''); setShowForm(true);
+    setEditingSessionId(null); setOriginalSetIds([]); setTitle(''); setDate(new Date().toISOString().slice(0,10)); setNotes(''); setSets([emptySet()]); setError(''); setNotice(''); setShowForm(true);
+  }
+  function openEditForm(session) {
+    setEditingSessionId(session.id);
+    setOriginalSetIds((session.workout_sets || []).map(item=>item.id));
+    setTitle(session.title || '');
+    setDate((session.performed_at || new Date().toISOString()).slice(0,10));
+    setNotes(session.notes || '');
+    setSets((session.workout_sets || []).slice().sort((a,b)=>a.set_number-b.set_number).map(item=>({...item, reps:item.reps ?? '', weight_kg:item.weight_kg ?? '', rest_seconds:item.rest_seconds ?? ''})));
+    setError(''); setNotice(''); setShowForm(true);
   }
   function updateSet(index, field, value) {
     setSets(prev => prev.map((item,i) => i===index ? {...item,[field]:value} : item));
   }
   function addSet() { setSets(prev => [...prev, {...emptySet(), set_number:prev.length+1}]); }
+  function removeSet(index) { setSets(prev => prev.filter((_,i)=>i!==index).map((item,i)=>({...item,set_number:i+1}))); }
   async function saveWorkout(e) {
     e.preventDefault(); setSaving(true); setError(''); setNotice('');
+    const wasEditing = Boolean(editingSessionId);
     const validSets = sets.filter(s => s.exercise_name.trim());
+    if (!title.trim()) { setError('Inserisci il nome dell’allenamento.'); setSaving(false); return; }
     if (!validSets.length) { setError('Inserisci almeno un esercizio.'); setSaving(false); return; }
-    const {data:sessionRow, error:sessionError} = await supabase.from('workout_sessions').insert({
-      user_id:userId, title:title.trim(), performed_at:new Date(`${date}T12:00:00`).toISOString(), notes:notes.trim() || null
-    }).select().single();
-    if (sessionError) { setError(`Salvataggio allenamento non riuscito: ${sessionError.message}`); setSaving(false); return; }
-    const rows = validSets.map(s => ({
-      session_id:sessionRow.id, exercise_name:s.exercise_name.trim(), set_number:Number(s.set_number)||1,
-      reps:s.reps===''?null:Number(s.reps), weight_kg:s.weight_kg===''?null:Number(String(s.weight_kg).replace(',','.')),
-      rest_seconds:s.rest_seconds===''?null:Number(s.rest_seconds), notes:s.notes.trim()||null
-    }));
-    const {error:setsError} = await supabase.from('workout_sets').insert(rows);
-    if (setsError) {
-      await supabase.from('workout_sessions').delete().eq('id', sessionRow.id);
-      setError(`Allenamento non salvato: ${setsError.message}`); setSaving(false); return;
+    const sessionPayload = {title:title.trim(), performed_at:new Date(`${date}T12:00:00`).toISOString(), notes:notes.trim() || null};
+    let sessionId = editingSessionId;
+    if (editingSessionId) {
+      const {error:sessionError} = await supabase.from('workout_sessions').update(sessionPayload).eq('id',editingSessionId).eq('user_id',userId);
+      if (sessionError) { setError(`Modifica allenamento non riuscita: ${sessionError.message}`); setSaving(false); return; }
+    } else {
+      const {data:sessionRow, error:sessionError} = await supabase.from('workout_sessions').insert({...sessionPayload,user_id:userId}).select().single();
+      if (sessionError) { setError(`Salvataggio allenamento non riuscito: ${sessionError.message}`); setSaving(false); return; }
+      sessionId = sessionRow.id;
     }
-    setShowForm(false); setNotice('Allenamento salvato nel cloud.'); await loadSessions(); setSaving(false);
+    const rows = validSets.map((s,index) => ({
+      ...(s.id ? {id:s.id} : {}), session_id:sessionId, exercise_name:s.exercise_name.trim(), set_number:Number(s.set_number)||index+1,
+      reps:s.reps===''?null:Number(s.reps), weight_kg:s.weight_kg===''?null:Number(String(s.weight_kg).replace(',','.')),
+      rest_seconds:s.rest_seconds===''?null:Number(s.rest_seconds), notes:(s.notes||'').trim()||null
+    }));
+    const existingIds = originalSetIds;
+    const keepIds = rows.filter(r=>r.id).map(r=>r.id);
+    const removedIds = existingIds.filter(id=>!keepIds.includes(id));
+    const updates = rows.filter(r=>r.id);
+    const inserts = rows.filter(r=>!r.id).map(({id,...r})=>r);
+    let setsError = null;
+    for (const row of updates) { const {id,...payload} = row; const result = await supabase.from('workout_sets').update(payload).eq('id',id); if (result.error) { setsError=result.error; break; } }
+    if (!setsError && inserts.length) { const result = await supabase.from('workout_sets').insert(inserts); setsError=result.error; }
+    if (!setsError && removedIds.length) { const result = await supabase.from('workout_sets').delete().in('id',removedIds); setsError=result.error; }
+    if (setsError) { setError(`Dati delle serie non aggiornati completamente: ${setsError.message}. Ricarica lo storico e controlla l’allenamento.`); await loadSessions(); setSaving(false); return; }
+    setShowForm(false); setEditingSessionId(null); setOriginalSetIds([]); setNotice(wasEditing ? 'Allenamento modificato nel cloud.' : 'Allenamento salvato nel cloud.'); await loadSessions(); setSaving(false);
   }
   async function deleteWorkout(id) {
     if (!window.confirm('Vuoi eliminare questo allenamento e tutte le sue serie?')) return;
@@ -279,23 +304,24 @@ function GymPage({userId}) {
     <div className="gym-summary"><div className="stat-card"><div className="stat-top"><span>Allenamenti</span><Dumbbell size={18}/></div><strong>{sessions.length}</strong><small>Sessioni registrate</small></div><div className="stat-card"><div className="stat-top"><span>Serie registrate</span><Activity size={18}/></div><strong>{totalSets}</strong><small>Totale serie nello storico</small></div></div>
     <section className="panel gym-history"><div className="panel-heading"><div><h2>Storico palestra</h2><p>Le sessioni più recenti sono mostrate per prime</p></div></div>
       {loading ? <div className="empty">Caricamento allenamenti…</div> : sessions.length===0 ? <div className="empty">Non hai ancora registrato allenamenti in palestra. Crea la tua prima sessione.</div> : <div className="gym-session-list">{sessions.map(session=><article className="gym-session" key={session.id}>
-        <div className="gym-session-head"><div><b>{session.title}</b><small>{new Date(session.performed_at).toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'})} · {(session.workout_sets||[]).length} serie</small></div><button className="delete-button" title="Elimina allenamento" aria-label="Elimina allenamento" onClick={()=>deleteWorkout(session.id)}><Trash2 size={16}/></button></div>
+        <div className="gym-session-head"><div><b>{session.title}</b><small>{new Date(session.performed_at).toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'})} · {(session.workout_sets||[]).length} serie</small></div><div className="gym-session-actions"><button className="edit-button" title="Modifica allenamento" aria-label="Modifica allenamento" onClick={()=>openEditForm(session)}><Pencil size={15}/></button><button className="delete-button" title="Elimina allenamento" aria-label="Elimina allenamento" onClick={()=>deleteWorkout(session.id)}><Trash2 size={16}/></button></div></div>
         <div className="gym-set-list">{(session.workout_sets||[]).sort((a,b)=>a.exercise_name.localeCompare(b.exercise_name)||a.set_number-b.set_number).map(set=><div className="gym-set-row" key={set.id}><b>{set.exercise_name}</b><span>Serie {set.set_number}</span><span>{set.reps ?? '—'} rip.</span><span>{set.weight_kg==null?'—':`${set.weight_kg} kg`}</span><span>{set.rest_seconds==null?'—':`${set.rest_seconds}s rec.`}</span></div>)}</div>
         {session.notes && <p className="gym-notes">{session.notes}</p>}
       </article>)}</div>}
     </section>
     {showForm && <div className="modal-backdrop" onClick={()=>setShowForm(false)}><form className="modal gym-modal" onSubmit={saveWorkout} onClick={e=>e.stopPropagation()}>
-      <div className="modal-head"><div><div className="eyebrow">DIARIO ALLENAMENTO</div><h2>Nuovo allenamento</h2></div><button type="button" className="icon-button" onClick={()=>setShowForm(false)}>✕</button></div>
+      <div className="modal-head"><div><div className="eyebrow">DIARIO ALLENAMENTO</div><h2>{editingSessionId ? 'Modifica allenamento' : 'Nuovo allenamento'}</h2></div><button type="button" className="icon-button" onClick={()=>setShowForm(false)}>✕</button></div>
       <label>Nome allenamento<input required value={title} onChange={e=>setTitle(e.target.value)} placeholder="Es. Full body A"/></label>
       <label>Data<input type="date" required value={date} onChange={e=>setDate(e.target.value)}/></label>
       <div className="gym-form-heading"><b>Esercizi e serie</b><span>Una riga per ogni serie</span></div>
-      <div className="gym-form-sets">{sets.map((set,index)=><div className="gym-form-set" key={index}>
+      <div className="gym-form-sets">{sets.map((set,index)=><div className="gym-form-set" key={set.id || index}>
         <label className="exercise-field">Esercizio<input required value={set.exercise_name} onChange={e=>updateSet(index,'exercise_name',e.target.value)} placeholder="Es. Squat"/></label>
         <div className="gym-fields"><label>Serie n.<input type="number" min="1" value={set.set_number} onChange={e=>updateSet(index,'set_number',e.target.value)}/></label><label>Ripetizioni<input type="number" min="0" value={set.reps} onChange={e=>updateSet(index,'reps',e.target.value)} placeholder="10"/></label><label>Carico (kg)<input type="number" min="0" step="0.5" value={set.weight_kg} onChange={e=>updateSet(index,'weight_kg',e.target.value)} placeholder="20"/></label><label>Recupero (sec)<input type="number" min="0" value={set.rest_seconds} onChange={e=>updateSet(index,'rest_seconds',e.target.value)} placeholder="90"/></label></div>
+        <button type="button" className="remove-set-button" onClick={()=>removeSet(index)}>Rimuovi serie</button>
       </div>)}</div>
       <button type="button" className="secondary-button" onClick={addSet}><Plus size={15}/> Aggiungi serie / esercizio</button>
       <label>Note<input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Eventuali note sull'allenamento"/></label>
-      <button className="primary-button full" type="submit" disabled={saving}>{saving?'Salvataggio…':'Salva allenamento nel cloud'}</button>
+      <button className="primary-button full" type="submit" disabled={saving}>{saving?'Salvataggio…':editingSessionId?'Salva modifiche':'Salva allenamento nel cloud'}</button>
     </form></div>}
   </div>;
 }
