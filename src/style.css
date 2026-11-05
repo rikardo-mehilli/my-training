@@ -36,3 +36,15 @@
 .statistics-page{display:grid;gap:15px}.statistics-toolbar{display:flex;justify-content:space-between;align-items:center;gap:20px}.statistics-toolbar h2{font:700 17px Manrope;margin:0}.statistics-toolbar p{font-size:11px;color:#8b9ab0;margin:7px 0 0}.statistics-filters{display:flex;align-items:flex-end;gap:9px;flex-wrap:wrap}.statistics-filters label{display:grid;gap:6px;color:#9ba9bd;font-size:10px}.statistics-filters select,.statistics-filters input{min-width:125px;background:#0e192a;border:1px solid #34445e;border-radius:8px;padding:9px 10px;color:#edf2fa;font:11px 'DM Sans';outline:none}.statistics-period-label{font-size:10px;color:#8290a6;padding:0 2px}.statistics-kpis{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0}.statistics-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.statistics-chart-panel{min-width:0}.statistics-chart{height:230px;margin-top:17px}.statistics-breakdown{padding:0;overflow:hidden}.statistics-breakdown>.panel-heading{padding:18px 20px}.statistics-type-list{display:grid}.statistics-type-row{display:flex;align-items:center;gap:11px;padding:13px 20px;border-top:1px solid #26344a;font-size:11px}.statistics-type-row b{flex:1}.statistics-type-row>span:not(.statistics-type-dot){color:#8290a6}.statistics-type-row strong{font-size:11px}.statistics-type-dot{width:8px;height:8px;border-radius:50%}.statistics-type-dot.running{background:#b99aff}.statistics-type-dot.cycling{background:#60cbbd}.statistics-type-dot.gym{background:#f0b18a}.statistics-type-dot.other{background:#829aff}.statistics-loading,.statistics-footnote{font-size:10px;color:#71819a;line-height:1.5}.statistics-footnote{margin:0}
 @media(max-width:850px){.statistics-toolbar{align-items:flex-start;flex-direction:column}.statistics-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.statistics-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.statistics-kpis{grid-template-columns:1fr 1fr}.statistics-filters{width:100%}.statistics-filters label{flex:1;min-width:0}.statistics-filters select,.statistics-filters input{min-width:0;width:100%}.statistics-type-row{padding:12px}.statistics-chart{height:195px}}
+
+/* Dettagli cardio e percorso GPS */
+.form-section-label{margin:8px 0 2px;color:#829aff;font-size:10px;font-weight:800;letter-spacing:1.2px}
+.field-hint{display:block;color:#8290a6;font-size:11px;margin-top:5px}
+.activity-detail-modal{width:min(760px,calc(100vw - 32px));max-height:88vh;overflow:auto}
+.detail-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:18px 0}
+.detail-metrics .stat-card{min-width:0}
+.detail-line{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid #263248;color:#cbd5e1;font-size:13px}
+.detail-line span{color:#fff;font-weight:700;text-align:right}
+.activity-detail-modal h3{font-size:15px;margin:20px 0 10px}
+.activity-map{height:340px;width:100%;border-radius:12px;overflow:hidden;border:1px solid #2a3850;z-index:0}
+@media(max-width:600px){.detail-metrics{grid-template-columns:1fr}.activity-map{height:260px}}
