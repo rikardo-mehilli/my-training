@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
-import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil } from 'lucide-react';
+import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './style.css';
 
@@ -185,7 +185,7 @@ function App() {
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{active!=='Palestra' && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
         {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
-        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : <>
+        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Calendario' ? <CalendarPage activities={activities} userId={session.user.id}/> : <>
           <section className="stats-grid">
             <Stat icon={Activity} label="Attività registrate" value={activities.length} foot="Nel tuo archivio cloud"/>
             <Stat icon={Clock3} label="Tempo registrato" value={secondsToDuration(totalSeconds)} foot="Totale delle attività"/>
@@ -364,6 +364,63 @@ function GymPage({userId}) {
       <label>Note<input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Eventuali note sull'allenamento"/></label>
       <button className="primary-button full" type="submit" disabled={saving}>{saving?'Salvataggio…':editingSessionId?'Salva modifiche':'Salva allenamento nel cloud'}</button>
     </form></div>}
+  </div>;
+}
+
+
+function dateKey(date) {
+  const y=date.getFullYear(), m=String(date.getMonth()+1).padStart(2,'0'), d=String(date.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+function CalendarPage({activities,userId}) {
+  const [workouts,setWorkouts]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState('');
+  const [cursor,setCursor]=useState(()=>new Date(new Date().getFullYear(),new Date().getMonth(),1));
+  const [selected,setSelected]=useState(()=>dateKey(new Date()));
+  const [view,setView]=useState('month');
+  useEffect(()=>{
+    let cancelled=false;
+    async function load(){
+      setLoading(true);setError('');
+      const {data,error}=await supabase.from('workout_sessions').select('id,title,performed_at').order('performed_at',{ascending:false});
+      if(cancelled)return;
+      if(error)setError(`Impossibile caricare gli allenamenti in palestra: ${error.message}`);
+      else setWorkouts(data||[]);
+      setLoading(false);
+    }
+    load();return()=>{cancelled=true;};
+  },[userId]);
+  const events=useMemo(()=>[
+    ...activities.map(a=>({id:`activity-${a.id}`,date:a.date,title:a.title,type:a.type,detail:[a.duration!=='—'?a.duration:null,a.distance!=='—'?a.distance:null].filter(Boolean).join(' · '),kind:'activity'})),
+    ...workouts.map(w=>({id:`workout-${w.id}`,date:w.performed_at.slice(0,10),title:w.title,type:'Palestra',detail:'Allenamento con i pesi',kind:'workout'}))
+  ].sort((a,b)=>a.date.localeCompare(b.date)),[activities,workouts]);
+  const eventsByDate=useMemo(()=>events.reduce((map,event)=>{(map[event.date] ||= []).push(event);return map;},{}),[events]);
+  const monthStart=new Date(cursor.getFullYear(),cursor.getMonth(),1);
+  const monthEnd=new Date(cursor.getFullYear(),cursor.getMonth()+1,0);
+  const offset=(monthStart.getDay()+6)%7;
+  const gridStart=new Date(monthStart);gridStart.setDate(monthStart.getDate()-offset);
+  const monthCells=Array.from({length:42},(_,i)=>{const d=new Date(gridStart);d.setDate(gridStart.getDate()+i);return d;});
+  const weekStart=new Date(cursor);weekStart.setDate(cursor.getDate()-((cursor.getDay()+6)%7));
+  const visibleDays=view==='month'?monthCells:Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);return d;});
+  const selectedEvents=eventsByDate[selected]||[];
+  const monthLabel=cursor.toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+  function move(step){const next=new Date(cursor);if(view==='month')next.setMonth(next.getMonth()+step);else next.setDate(next.getDate()+step*7);setCursor(next);}
+  function goToday(){const now=new Date();setCursor(new Date(now.getFullYear(),now.getMonth(),1));setSelected(dateKey(now));}
+  return <div className="calendar-page">
+    {error&&<div className="notice error">{error}</div>}
+    <section className="panel calendar-panel">
+      <div className="calendar-toolbar"><div><div className="eyebrow">IL TUO ARCHIVIO SPORTIVO</div><h2>{monthLabel}</h2><p>{events.length} attività e allenamenti registrati</p></div><div className="calendar-controls"><button className="secondary-button" onClick={goToday}>Oggi</button><button className="icon-button" aria-label="Periodo precedente" onClick={()=>move(-1)}><ChevronLeft size={17}/></button><button className="icon-button" aria-label="Periodo successivo" onClick={()=>move(1)}><ChevronRight size={17}/></button><div className="calendar-view-switch"><button className={view==='month'?'active':''} onClick={()=>setView('month')}>Mese</button><button className={view==='week'?'active':''} onClick={()=>setView('week')}>Settimana</button></div></div></div>
+      <div className="calendar-legend"><span><i className="legend-dot running-dot"/> Running</span><span><i className="legend-dot cycling-dot"/> Ciclismo</span><span><i className="legend-dot gym-dot"/> Palestra</span><span><i className="legend-dot other-dot"/> Altre attività</span></div>
+      <div className={`calendar-grid ${view==='week'?'week-view':''}`}>
+        {['Lun','Mar','Mer','Gio','Ven','Sab','Dom'].map(day=><div className="calendar-weekday" key={day}>{day}</div>)}
+        {visibleDays.map(day=>{const key=dateKey(day),dayEvents=eventsByDate[key]||[],outside=day.getMonth()!==cursor.getMonth();return <button key={key} className={`calendar-day ${outside&&view==='month'?'outside':''} ${selected===key?'chosen':''} ${key===dateKey(new Date())?'today':''}`} onClick={()=>setSelected(key)}><span className="calendar-day-number">{day.getDate()}</span><span className="calendar-day-events">{dayEvents.slice(0,3).map(event=><span key={event.id} className={`calendar-event ${event.type==='Running'?'running-event':event.type==='Ciclismo'?'cycling-event':event.type==='Palestra'?'gym-event':'other-event'}`}>{event.title}</span>)}{dayEvents.length>3&&<small>+{dayEvents.length-3} altre</small>}</span><span className="calendar-mobile-count">{dayEvents.length?`${dayEvents.length} att.`:''}</span></button>;})}
+      </div>
+      {loading&&<div className="calendar-loading">Caricamento allenamenti palestra…</div>}
+    </section>
+    <section className="panel calendar-detail"><div className="panel-heading"><div><h2>{new Date(selected+'T12:00:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2><p>Attività registrate in questa giornata</p></div><span className="period">{selectedEvents.length} {selectedEvents.length===1?'attività':'attività'}</span></div>
+      {selectedEvents.length===0?<div className="empty">Nessun allenamento registrato in questa giornata.</div>:<div className="calendar-event-list">{selectedEvents.map(event=><article className="calendar-detail-event" key={event.id}><span className={`calendar-detail-icon ${event.type==='Running'?'running-event':event.type==='Ciclismo'?'cycling-event':event.type==='Palestra'?'gym-event':'other-event'}`}>{event.type==='Running'?<Footprints size={18}/>:event.type==='Ciclismo'?<Bike size={18}/>:event.type==='Palestra'?<Dumbbell size={18}/>:<Activity size={18}/>}</span><div><b>{event.title}</b><small>{event.type}{event.detail?` · ${event.detail}`:''}</small></div><span className="calendar-source">{event.kind==='workout'?'Diario palestra':'Registro attività'}</span></article>)}</div>}
+    </section>
   </div>;
 }
 
