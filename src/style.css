@@ -132,3 +132,77 @@ button:disabled{opacity:.55}
 .completed-button{background:#173d34;color:#7ce0bd;border:1px solid #286b59;border-radius:9px;padding:10px 14px}
 .garmin-settings-line{align-items:center}
 @media(max-width:700px){.plan-manager-head{align-items:flex-start;flex-direction:column}.live-set{grid-template-columns:1fr 1fr}.live-set>b{grid-column:1/-1}.live-set button{grid-column:1/-1}.rest-timer{align-items:center}}
+
+/* Uniformità dei moduli palestra con il modulo di registrazione attività */
+.plan-editor,
+.gym-modal {
+  background:#0b0b0d;
+  border:1px solid #343438;
+  border-radius:16px;
+  color:#f3f3f5;
+  box-shadow:0 18px 55px #0008;
+}
+.plan-editor {
+  width:min(760px,100%);
+  max-width:760px;
+  margin:0 auto 16px;
+  padding:23px;
+  gap:14px;
+}
+.plan-editor .modal-head,
+.gym-modal .modal-head { margin-bottom:8px; }
+.plan-editor h3,
+.gym-modal h3 { color:#f5f5f6; font:700 18px Manrope; }
+.plan-editor label,
+.gym-modal label,
+.live-set label {
+  display:block;
+  color:#aab7c9;
+  font:500 11px 'DM Sans';
+  margin-bottom:12px;
+}
+.plan-editor input,
+.plan-editor select,
+.gym-modal input,
+.gym-modal select,
+.live-set input,
+.rest-timer input {
+  display:block;
+  width:100%;
+  min-width:0;
+  margin-top:7px;
+  padding:11px 12px;
+  border:1px solid #343438;
+  border-radius:8px;
+  background:#111113 !important;
+  color:#f5f5f6 !important;
+  font:12px 'DM Sans';
+}
+.plan-exercise-form,
+.gym-form-set {
+  padding:14px;
+  border:1px solid #29292d;
+  border-radius:10px;
+  background:#101012;
+}
+.plan-editor .gym-fields,
+.gym-modal .gym-fields { gap:10px; }
+.plan-editor .secondary-button,
+.gym-modal .secondary-button { margin:0; }
+.plan-editor .primary-button,
+.gym-modal .primary-button { margin-top:4px; }
+.workout-live-head,
+.live-sets,
+.rest-timer { border:1px solid #29292d; background:#0b0b0d; }
+.live-sets h3 { color:#f5f5f6; font:700 15px Manrope; }
+.live-set { border-top-color:#29292d; }
+.live-set b { color:#f3f3f5; font-size:12px; }
+.live-set label { margin:0; }
+.pagination-actions { display:flex; align-items:center; gap:16px; }
+.pagination-actions button { display:flex; align-items:center; gap:3px; }
+@media(max-width:700px) {
+  .plan-editor { padding:16px; }
+  .plan-editor .gym-fields,
+  .gym-modal .gym-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .pagination-actions { gap:10px; flex-wrap:wrap; }
+}
