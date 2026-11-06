@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
-import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil } from 'lucide-react';
+import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil, Play, Pause, Timer, Copy, Check, X } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import L from 'leaflet';
 import { Decoder, Stream } from '@garmin/fitsdk';
@@ -234,6 +234,13 @@ function App() {
     return () => { cancelled = true; };
   }, [session]);
 
+  const autoSyncedUser = useRef(null);
+  useEffect(() => {
+    if (!session?.user?.id || !authReady || autoSyncedUser.current === session.user.id) return;
+    autoSyncedUser.current = session.user.id;
+    syncGarmin();
+  }, [session, authReady]);
+
   const filtered = useMemo(() => activities.filter(a =>
     (active === 'Registro attività' || active === 'Panoramica' || active === 'Statistiche' || active === 'Impostazioni' || a.type === active) &&
     `${a.title} ${a.type} ${a.source}`.toLowerCase().includes(query.toLowerCase())
@@ -386,7 +393,7 @@ function App() {
       <div className="sidebar-bottom"><div className="profile"><div className="avatar"><UserRound size={18}/></div><div><b>Area personale</b><small>{session.user.email}</small></div></div><div className="private-note">I tuoi dati, in un unico posto.</div></div>
     </aside>
     <main className="main">
-      <header className="topbar"><div className="breadcrumb">My Training <ChevronRight size={14}/> <b>{active}</b></div><div className="top-actions"><span className="sync"><span className="dot"/> Cloud sincronizzato</span><button className="secondary-button garmin-top-button" onClick={syncGarmin} disabled={garminSyncing}>{garminSyncing ? 'Sincronizzazione…' : 'Sincronizza Garmin'}</button><button className="icon-button" aria-label="Esci" title="Esci" onClick={signOut}><LogOut size={17}/></button></div></header>
+      <header className="topbar"><div className="breadcrumb">My Training <ChevronRight size={14}/> <b>{active}</b></div><div className="top-actions"><span className="sync"><span className="dot"/> Cloud sincronizzato</span><button className="icon-button" aria-label="Esci" title="Esci" onClick={signOut}><LogOut size={17}/></button></div></header>
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{active!=='Palestra' && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
         {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
@@ -402,7 +409,7 @@ function App() {
             <div><strong>{garminSyncReport.elevationProfiles}</strong><span>Profili altimetrici</span></div>
           </div>
         </section>}
-        {active==='Impostazioni' ? <SettingsPage email={session.user.email}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
+        {active==='Impostazioni' ? <SettingsPage email={session.user.email} onSync={syncGarmin} syncing={garminSyncing}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
           <section className="stats-grid">
             {active==='Running' || active==='Ciclismo' ? <>
               <Stat icon={Activity} label={active==='Running'?'Corse registrate':'Uscite registrate'} value={disciplineActivities.length} foot="Solo questa disciplina"/>
@@ -442,6 +449,52 @@ function App() {
     </form></div>}
   </div>;
 }
+
+
+function GymPlanManager({userId,onSaved}) {
+  const [plans,setPlans]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState('');
+  const [editing,setEditing]=useState(null),[name,setName]=useState(''),[notes,setNotes]=useState(''),[items,setItems]=useState([{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90}]);
+  const [running,setRunning]=useState(null),[sets,setSets]=useState([]),[rest,setRest]=useState(0),[paused,setPaused]=useState(false),[timerEdit,setTimerEdit]=useState('90'),[saving,setSaving]=useState(false);
+  const timer=useRef(null);
+  async function load(){setLoading(true);const {data,error}=await supabase.from('workout_plans').select('id,name,notes,workout_plan_exercises(id,exercise_name,sort_order,sets_count,reps,starting_weight_kg,rest_seconds)').order('created_at',{ascending:false});if(error)setError(error.message);else setPlans((data||[]).map(p=>({...p,workout_plan_exercises:(p.workout_plan_exercises||[]).sort((a,b)=>a.sort_order-b.sort_order)})));setLoading(false);}
+  useEffect(()=>{load();},[userId]);
+  useEffect(()=>{if(rest>0&&!paused){timer.current=setTimeout(()=>setRest(v=>Math.max(0,v-1)),1000);return()=>clearTimeout(timer.current);}return()=>clearTimeout(timer.current);},[rest,paused]);
+  useEffect(()=>()=>clearTimeout(timer.current),[]);
+  function edit(p=null){setEditing(p?.id||null);setName(p?.name||'Nuova scheda');setNotes(p?.notes||'');setItems(p?p.workout_plan_exercises.map(x=>({id:x.id,exercise_name:x.exercise_name,sets_count:x.sets_count,reps:x.reps,weight:x.starting_weight_kg,rest:x.rest_seconds})): [{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90}]);}
+  function change(i,k,v){setItems(old=>old.map((x,j)=>i===j?{...x,[k]:v}:x));}
+  async function save(e){e.preventDefault();setSaving(true);setError('');const valid=items.filter(x=>x.exercise_name.trim());if(!name.trim()||!valid.length){setError('Inserisci un nome e almeno un esercizio.');setSaving(false);return;}
+    let id=editing;let r=editing?await supabase.from('workout_plans').update({name:name.trim(),notes:notes.trim()||null}).eq('id',editing).eq('user_id',userId):await supabase.from('workout_plans').insert({user_id:userId,name:name.trim(),notes:notes.trim()||null}).select('id').single();
+    if(r.error){setError(r.error.message);setSaving(false);return;}if(!editing)id=r.data.id;
+    const d=await supabase.from('workout_plan_exercises').delete().eq('plan_id',id);if(d.error){setError(d.error.message);setSaving(false);return;}
+    const ins=await supabase.from('workout_plan_exercises').insert(valid.map((x,i)=>({plan_id:id,exercise_name:x.exercise_name.trim(),sort_order:i,sets_count:Number(x.sets_count)||1,reps:Number(x.reps)||0,starting_weight_kg:Number(x.weight)||0,rest_seconds:Number(x.rest)||0})));
+    if(ins.error)setError(ins.error.message);else{setEditing(null);setName('');setNotes('');await load();}setSaving(false);
+  }
+  async function duplicate(p){const {data,error}=await supabase.from('workout_plans').insert({user_id:userId,name:`${p.name} (copia)`,notes:p.notes}).select('id').single();if(error){setError(error.message);return;}const r=await supabase.from('workout_plan_exercises').insert(p.workout_plan_exercises.map((x,i)=>({plan_id:data.id,exercise_name:x.exercise_name,sort_order:i,sets_count:x.sets_count,reps:x.reps,starting_weight_kg:x.starting_weight_kg,rest_seconds:x.rest_seconds})));if(r.error)setError(r.error.message);else load();}
+  async function remove(p){if(!window.confirm(`Eliminare la scheda ${p.name}?`))return;const {error}=await supabase.from('workout_plans').delete().eq('id',p.id);if(error)setError(error.message);else setPlans(v=>v.filter(x=>x.id!==p.id));}
+  async function start(p){
+    setError('');
+    const {data,error}=await supabase.from('workout_sets')
+      .select('exercise_name,weight_kg,workout_sessions!inner(user_id,performed_at)')
+      .eq('workout_sessions.user_id',userId).order('performed_at',{ascending:false,referencedTable:'workout_sessions'});
+    if(error){setError(`Impossibile recuperare gli ultimi carichi: ${error.message}`);return;}
+    const latest=new Map();
+    for(const row of data||[]){const key=String(row.exercise_name||'').trim().toLocaleLowerCase('it-IT');if(key&&!latest.has(key)&&row.weight_kg!=null)latest.set(key,Number(row.weight_kg));}
+    setRunning(p);
+    setSets(p.workout_plan_exercises.flatMap(ex=>Array.from({length:ex.sets_count},(_,i)=>({exercise:ex.exercise_name,number:i+1,reps:ex.reps,weight:latest.get(ex.exercise_name.trim().toLocaleLowerCase('it-IT'))??ex.starting_weight_kg,rest:ex.rest_seconds,done:false}))));
+  }
+  function mark(i){setSets(old=>old.map((x,j)=>j===i?{...x,done:true}:x));const sec=Number(sets[i]?.rest)||0;if(sec){setRest(sec);setTimerEdit(String(sec));setPaused(false);}}
+  async function finish(){setSaving(true);const {data,error}=await supabase.from('workout_sessions').insert({user_id:userId,title:running.name,performed_at:new Date().toISOString(),notes:null,plan_id:running.id}).select('id').single();if(error){setError(error.message);setSaving(false);return;}const rows=sets.map(x=>({session_id:data.id,exercise_name:x.exercise,set_number:x.number,reps:Number(x.reps)||0,weight_kg:Number(x.weight)||0,rest_seconds:x.rest,completed:x.done}));const r=await supabase.from('workout_sets').insert(rows);if(r.error)setError(r.error.message);else{setRunning(null);setSets([]);setRest(0);onSaved?.();}setSaving(false);}
+  if(running)return <div className="gym-plan-manager"><div className="panel workout-live-head"><div><div className="eyebrow">SESSIONE IN CORSO</div><h2>{running.name}</h2></div><button className="secondary-button" onClick={()=>{if(window.confirm('Interrompere senza salvare?')){setRunning(null);setRest(0);}}}>Interrompi</button></div>
+    {rest>0&&<div className="panel rest-timer"><Timer/><strong>{String(Math.floor(rest/60)).padStart(2,'0')}:{String(rest%60).padStart(2,'0')}</strong><button className="secondary-button" onClick={()=>setPaused(v=>!v)}>{paused?'Riprendi':'Pausa'}</button><button className="secondary-button" onClick={()=>setRest(0)}>Salta</button><input aria-label="Secondi recupero" type="number" min="0" value={timerEdit} onChange={e=>setTimerEdit(e.target.value)}/><button className="secondary-button" onClick={()=>{setRest(Math.max(0,Number(timerEdit)||0));setPaused(false);}}>Modifica</button></div>}
+    <div className="panel live-sets"><h3>Serie previste</h3>{sets.map((s,i)=><div className={`live-set ${s.done?'is-done':''}`} key={i}><b>{s.exercise} · {s.number}</b><label>Ripetizioni<input type="number" value={s.reps} onChange={e=>setSets(v=>v.map((x,j)=>j===i?{...x,reps:e.target.value}:x))}/></label><label>Carico kg<input type="number" step="0.5" value={s.weight} onChange={e=>setSets(v=>v.map((x,j)=>j===i?{...x,weight:e.target.value}:x))}/></label><button className={s.done?'completed-button':'primary-button'} disabled={s.done} onClick={()=>mark(i)}>{s.done?<><Check size={14}/> Fatta</>:'Completa serie'}</button></div>)}</div><button className="primary-button" disabled={saving} onClick={finish}>{saving?'Salvataggio…':'Termina e salva allenamento'}</button>
+  </div>;
+  return <div className="gym-plan-manager"><div className="panel plan-manager-head"><div><div className="eyebrow">PROGRAMMI RIUTILIZZABILI</div><h2>Schede di allenamento</h2><p>Crea più programmi e avvia una sessione guidata. I carichi dell’ultima volta restano modificabili.</p></div><button className="primary-button" onClick={()=>edit()}><Plus size={16}/> Nuova scheda</button></div>
+    {error&&<div className="notice error">{error}</div>}
+    {editing!==null||name!==''?<form className="panel plan-editor" onSubmit={save}><div className="modal-head"><h3>{editing?'Modifica scheda':'Nuova scheda'}</h3><button type="button" className="icon-button" onClick={()=>{setEditing(null);setName('');}}>✕</button></div><label>Nome<input required value={name} onChange={e=>setName(e.target.value)}/></label><label>Note<input value={notes} onChange={e=>setNotes(e.target.value)}/></label>{items.map((x,i)=><div className="plan-exercise-form" key={i}><label>Esercizio<input required value={x.exercise_name} onChange={e=>change(i,'exercise_name',e.target.value)} placeholder="Nome esercizio"/></label><div className="gym-fields"><label>Serie<input type="number" min="1" value={x.sets_count} onChange={e=>change(i,'sets_count',e.target.value)}/></label><label>Ripetizioni<input type="number" min="1" value={x.reps} onChange={e=>change(i,'reps',e.target.value)}/></label><label>Carico kg<input type="number" min="0" step="0.5" value={x.weight} onChange={e=>change(i,'weight',e.target.value)}/></label><label>Recupero sec<input type="number" min="0" value={x.rest} onChange={e=>change(i,'rest',e.target.value)}/></label></div><button type="button" className="remove-set-button" onClick={()=>setItems(v=>v.filter((_,j)=>j!==i))}>Rimuovi esercizio</button></div>)}<button type="button" className="secondary-button" onClick={()=>setItems(v=>[...v,{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90}])}><Plus size={14}/> Aggiungi esercizio</button><button className="primary-button" disabled={saving}>{saving?'Salvataggio…':'Salva scheda'}</button></form>:null}
+    {loading?<div className="empty">Caricamento schede…</div>:<div className="plan-grid">{plans.map(p=><article className="panel plan-card" key={p.id}><div className="plan-card-head"><div><h3>{p.name}</h3><small>{p.workout_plan_exercises.length} esercizi</small></div><div className="gym-session-actions"><button className="edit-button" onClick={()=>{edit(p);}} title="Modifica"><Pencil size={15}/></button><button className="edit-button" onClick={()=>duplicate(p)} title="Duplica"><Copy size={15}/></button><button className="delete-button" onClick={()=>remove(p)} title="Elimina"><Trash2 size={15}/></button></div></div><ul>{p.workout_plan_exercises.map(x=><li key={x.id}>{x.exercise_name}<span>{x.sets_count} × {x.reps} · {x.starting_weight_kg} kg</span></li>)}</ul><button className="primary-button full" onClick={()=>start(p)}><Play size={15}/> Avvia sessione</button></article>)}</div>}
+  </div>;
+}
+
 
 function GymPage({userId}) {
   const [sessions, setSessions] = useState([]);
@@ -560,6 +613,7 @@ function GymPage({userId}) {
   const bestWeight = exerciseProgress.reduce((best,item)=>item.maxWeight == null ? best : Math.max(best,item.maxWeight),0);
   const latestWeight = [...exerciseProgress].reverse().find(item=>item.maxWeight != null)?.maxWeight ?? null;
   return <div className="gym-page">
+    <GymPlanManager userId={userId} onSaved={loadSessions}/>
     {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
         
     <div className="gym-intro panel"><div><div className="eyebrow">ALLENAMENTO CON I PESI</div><h2>Il tuo diario palestra</h2><p>Registra esercizi, serie, ripetizioni, carichi e recuperi. I dati vengono salvati nel tuo archivio personale.</p></div><button className="primary-button" onClick={openForm}><Plus size={17}/> Nuovo allenamento</button></div>
@@ -758,6 +812,6 @@ function ActivityDetails({activity,onClose}) {
   return <div className="modal-backdrop" onClick={onClose}><div className="modal activity-detail-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">DETTAGLIO ATTIVITÀ</div><h2>{activity.title}</h2></div><button type="button" className="icon-button" onClick={onClose}>✕</button></div><div className="detail-metrics"><Stat icon={Clock3} label="Durata" value={activity.duration} foot=""/><Stat icon={Activity} label="Distanza" value={activity.distance} foot=""/><Stat icon={Gauge} label="FC media / max" value={activity.heartRateAvg==null?'—':`${activity.heartRateAvg} / ${activity.heartRateMax??'—'} bpm`} foot=""/><Stat icon={Waves} label="Dislivello + / −" value={`${activity.elevation==='—'?'—':activity.elevation} / ${activity.elevationLoss??'—'} m`} foot=""/></div><div className="detail-line"><b>{speedLabel}</b><span>{speedValue}</span></div>{activity.speedMax!=null&&<div className="detail-line"><b>{activity.type==='Running'?'Ritmo/velocità max.':'Velocità massima'}</b><span>{activity.type==='Running'?activity.speedMax:`${formatMetric(activity.speedMax)} km/h`}</span></div>}{activity.route?.length>1?<><h3>Percorso GPS</h3><div ref={mapRef} className="activity-map"/><small className="field-hint">Mappa © OpenStreetMap · tracciato importato da GPX</small></>:<div className="empty">Nessun percorso GPS associato. Puoi importare un file GPX modificando l'attività.</div>}</div></div>;
 }
 
-function SettingsPage({email}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin</b><small>Importazione delle attività tramite Garmin Connect</small></div><span className="status-active">Configurata</span></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
+function SettingsPage({email,onSync,syncing}) { return <div className="panel settings-card"><h2>Impostazioni del progetto</h2><p>Il tuo account è autenticato e le attività vengono salvate nel database Supabase.</p><div className="settings-line"><div><b>Account personale</b><small>{email}</small></div><span className="status-active">Attivo</span></div><div className="settings-line"><div><b>Database cloud</b><small>Archivio personale protetto da policy RLS</small></div><span className="status-active">Collegato</span></div><div className="settings-line"><div><b>Sincronizzazione Garmin</b><small>Automatica all’apertura; sincronizzazione manuale da qui.</small></div><button className="secondary-button" onClick={onSync} disabled={syncing}>{syncing?'Sincronizzazione…':'Sincronizza adesso'}</button></div><div className="settings-line"><div><b>Pubblicazione GitHub Pages</b><small>Deploy tramite GitHub Actions</small></div><span className="status-active">Attiva</span></div></div>; }
 
 createRoot(document.getElementById('root')).render(<App/>);
