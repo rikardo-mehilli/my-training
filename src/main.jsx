@@ -199,6 +199,7 @@ function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [active, setActive] = useState('Panoramica');
+  const [activityLimit, setActivityLimit] = useState(10);
   const [activities, setActivities] = useState([]);
   const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -245,6 +246,8 @@ function App() {
     (active === 'Registro attività' || active === 'Panoramica' || active === 'Statistiche' || active === 'Impostazioni' || a.type === active) &&
     `${a.title} ${a.type} ${a.source}`.toLowerCase().includes(query.toLowerCase())
   ), [activities, active, query]);
+  useEffect(() => { setActivityLimit(10); }, [active, query]);
+  const visibleActivities = filtered.slice(0, activityLimit);
 
   function openNewActivity() { setEditingId(null); setForm(emptyForm()); setShowForm(true); }
 
@@ -424,16 +427,12 @@ function App() {
               <Stat icon={Waves} label="Dislivello positivo" value={`${totalElevation.toLocaleString('it-IT')} m`} foot="Quando disponibile"/>
             </>}
           </section>
-          {active==='Panoramica' && <section className="two-col">
-            <div className="panel chart-panel"><div className="panel-heading"><div><h2>Attività della settimana</h2><p>Grafico dimostrativo, da collegare ai dati reali</p></div><span className="period">Esempio</span></div><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e23b4f" stopOpacity={0.28}/><stop offset="100%" stopColor="#e23b4f" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#263248"/><XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}}/><YAxis axisLine={false} tickLine={false} tick={{fill:'#8290a6',fontSize:12}} width={32}/><Tooltip contentStyle={{background:'#172235',border:'1px solid #2a3850',borderRadius:10,color:'#fff'}}/><Area type="monotone" dataKey="value" stroke="#f04456" strokeWidth={2.5} fill="url(#fill)"/></AreaChart></ResponsiveContainer></div></div>
-            <div className="panel import-panel"><div className="panel-heading"><div><h2>Importa le tue attività</h2><p>Gestisci il tuo archivio sportivo</p></div><Upload size={19}/></div><div className="integration-foot">Puoi registrare manualmente un allenamento oppure importare file GPX, TCX e FIT dalla schermata di registrazione.</div></div>
-          </section>}
           {active==='Panoramica' && <CalendarPage activities={activities} userId={session.user.id}/>}
-          <section className="panel activity-panel">
-            <div className="panel-heading activity-heading"><div><h2>{active==='Panoramica'?'Attività recenti':active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
-            {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{filtered.length ? filtered.map(a=><ActivityRow key={a.id} item={a} onEdit={openEditActivity} onDelete={deleteActivity} onDetails={setDetailActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
-            <div className="panel-footer">Visualizzate {filtered.length} attività <button onClick={()=>setActive('Registro attività')}>Apri registro completo <ChevronRight size={15}/></button></div>
-          </section>
+          {active!=='Panoramica' && <section className="panel activity-panel">
+            <div className="panel-heading activity-heading"><div><h2>{active==='Statistiche'?'Attività analizzate':'Registro attività'}</h2><p>Consulta e cerca gli allenamenti registrati</p></div><div className="search-wrap"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Cerca attività..."/></div></div>
+            {loading ? <div className="empty">Caricamento attività…</div> : <div className="activity-list">{visibleActivities.length ? visibleActivities.map(a=><ActivityRow key={a.id} item={a} onEdit={openEditActivity} onDelete={deleteActivity} onDetails={setDetailActivity}/>) : <div className="empty">Nessuna attività trovata. Registra il tuo primo allenamento.</div>}</div>}
+            <div className="panel-footer"><span>Visualizzate {Math.min(activityLimit,filtered.length)} di {filtered.length} attività</span><div className="pagination-actions">{activityLimit<filtered.length&&<button onClick={()=>setActivityLimit(v=>v+10)}>Carica altre 10 <ChevronRight size={15}/></button>}{active!=='Registro attività'&&<button onClick={()=>setActive('Registro attività')}>Apri registro completo <ChevronRight size={15}/></button>}</div></div>
+          </section>}
         </>}
         <footer>MY TRAINING <span>·</span> Archivio personale su Supabase</footer>
       </div>
@@ -498,6 +497,7 @@ function GymPlanManager({userId,onSaved}) {
 
 function GymPage({userId}) {
   const [sessions, setSessions] = useState([]);
+  const [sessionLimit, setSessionLimit] = useState(10);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -628,11 +628,12 @@ function GymPage({userId}) {
       </>}
     </section>
     <section className="panel gym-history"><div className="panel-heading"><div><h2>Storico palestra</h2><p>Le sessioni più recenti sono mostrate per prime</p></div></div>
-      {loading ? <div className="empty">Caricamento allenamenti…</div> : sessions.length===0 ? <div className="empty">Non hai ancora registrato allenamenti in palestra. Crea la tua prima sessione.</div> : <div className="gym-session-list">{sessions.map(session=><article className="gym-session" key={session.id}>
+      {loading ? <div className="empty">Caricamento allenamenti…</div> : sessions.length===0 ? <div className="empty">Non hai ancora registrato allenamenti in palestra. Crea la tua prima sessione.</div> : <div className="gym-session-list">{sessions.slice(0,sessionLimit).map(session=><article className="gym-session" key={session.id}>
         <div className="gym-session-head"><div><b>{session.title}</b><small>{new Date(session.performed_at).toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'})} · {(session.workout_sets||[]).length} serie</small></div><div className="gym-session-actions"><button className="edit-button" title="Modifica allenamento" aria-label="Modifica allenamento" onClick={()=>openEditForm(session)}><Pencil size={15}/></button><button className="delete-button" title="Elimina allenamento" aria-label="Elimina allenamento" onClick={()=>deleteWorkout(session.id)}><Trash2 size={16}/></button></div></div>
         <div className="gym-set-list">{(session.workout_sets||[]).sort((a,b)=>a.exercise_name.localeCompare(b.exercise_name)||a.set_number-b.set_number).map(set=><div className="gym-set-row" key={set.id}><b>{set.exercise_name}</b><span>Serie {set.set_number}</span><span>{set.reps ?? '—'} rip.</span><span>{set.weight_kg==null?'—':`${set.weight_kg} kg`}</span><span>{set.rest_seconds==null?'—':`${set.rest_seconds}s rec.`}</span></div>)}</div>
         {session.notes && <p className="gym-notes">{session.notes}</p>}
       </article>)}</div>}
+      {!loading&&sessions.length>sessionLimit&&<div className="panel-footer"><span>Visualizzate {Math.min(sessionLimit,sessions.length)} di {sessions.length} sessioni</span><button onClick={()=>setSessionLimit(v=>v+10)}>Carica altre 10 <ChevronRight size={15}/></button></div>}
     </section>
     {showForm && <div className="modal-backdrop" onClick={()=>setShowForm(false)}><form className="modal gym-modal" onSubmit={saveWorkout} onClick={e=>e.stopPropagation()}>
       <div className="modal-head"><div><div className="eyebrow">DIARIO ALLENAMENTO</div><h2>{editingSessionId ? 'Modifica allenamento' : 'Nuovo allenamento'}</h2></div><button type="button" className="icon-button" onClick={()=>setShowForm(false)}>✕</button></div>
