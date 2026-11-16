@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
-import { Activity, Bike, CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil, Play, Pause, Timer, Copy, Check, X } from 'lucide-react';
+import { Activity, Bike, CalendarDays, ChartNoAxesCombined, BookOpen, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil, Play, Pause, Timer, Copy, Check, X } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import L from 'leaflet';
 import { Decoder, Stream } from '@garmin/fitsdk';
@@ -17,7 +17,7 @@ const supabase = createClient(
 const trend = [{day:'Lun',value:0},{day:'Mar',value:58},{day:'Mer',value:0},{day:'Gio',value:72},{day:'Ven',value:0},{day:'Sab',value:145},{day:'Dom',value:42}];
 const nav = [
   {label:'Panoramica', icon:LayoutDashboard}, {label:'Registro attività', icon:Activity},
-  {label:'Palestra', icon:Dumbbell}, {label:'Running', icon:Footprints}, {label:'Ciclismo', icon:Bike}, {label:'Statistiche', icon:ChartNoAxesCombined}, {label:'Impostazioni', icon:Settings}
+  {label:'Palestra', icon:Dumbbell}, {label:'Studio', icon:BookOpen}, {label:'Running', icon:Footprints}, {label:'Ciclismo', icon:Bike}, {label:'Statistiche', icon:ChartNoAxesCombined}, {label:'Impostazioni', icon:Settings}
 ];
 
 function numberFrom(value) {
@@ -212,7 +212,6 @@ function App() {
   const [notice, setNotice] = useState('');
   const [detailActivity, setDetailActivity] = useState(null);
   const [garminSyncing, setGarminSyncing] = useState(false);
-  const [garminSyncReport, setGarminSyncReport] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({data}) => { setSession(data.session); setAuthReady(true); });
@@ -225,10 +224,11 @@ function App() {
     async function load() {
       if (!session) { setActivities([]); return; }
       setLoading(true); setError('');
-      const {data, error} = await supabase.from('activities').select('*').order('started_at', {ascending:false});
+      let allRows=[], page=0, pageSize=1000, error=null;
+      while(true){const result=await supabase.from('activities').select('*').order('started_at',{ascending:false}).range(page*pageSize,(page+1)*pageSize-1);if(result.error){error=result.error;break;}const chunk=result.data||[];allRows.push(...chunk);if(chunk.length<pageSize)break;page++;}
       if (cancelled) return;
       if (error) setError(`Errore caricamento attività: ${error.message}`);
-      else setActivities((data || []).map(fromDatabase));
+      else setActivities(allRows.map(fromDatabase));
       setLoading(false);
     }
     load();
@@ -323,7 +323,6 @@ function App() {
     setGarminSyncing(true);
     setError('');
     setNotice('');
-    setGarminSyncReport(null);
 
     try {
       const { data, error } = await supabase.functions.invoke('garmin-sync', {
@@ -346,26 +345,12 @@ function App() {
         throw new Error(data?.error || 'Sincronizzazione Garmin non riuscita.');
       }
 
-      const { data: rows, error: loadError } = await supabase
-        .from('activities')
-        .select('*')
-        .order('started_at', { ascending: false });
-
-      if (loadError) throw loadError;
-
-      setActivities((rows || []).map(fromDatabase));
-      setGarminSyncReport({
-        imported: data.imported ?? 0,
-        checkedForDetails: data.checkedForDetails ?? 0,
-        enriched: data.enriched ?? 0,
-        heartRateActivities: data.heartRateActivities ?? 0,
-        elevationActivities: data.elevationActivities ?? 0,
-        gpsTracks: data.gpsTracks ?? 0,
-        elevationProfiles: data.elevationProfiles ?? 0,
-      });
-      setNotice(data.message || `Sincronizzazione Garmin completata: ${data.imported ?? 0} attività.`);
+      let rows=[], page=0, chunk=[];
+      do { const result=await supabase.from('activities').select('*').order('started_at',{ascending:false}).range(page*1000,(page+1)*1000-1); if(result.error)throw result.error; chunk=result.data||[]; rows.push(...chunk); page++; } while(chunk.length===1000);
+      setActivities(rows.map(fromDatabase));
+      setNotice('Sincronizzazione Garmin completata.');
     } catch (err) {
-      setError(err.message || 'Errore durante la sincronizzazione Garmin.');
+      setError('Sincronizzazione Garmin non riuscita. Riprova tra poco.');
     } finally {
       setGarminSyncing(false);
     }
@@ -398,21 +383,9 @@ function App() {
     <main className="main">
       <header className="topbar"><div className="breadcrumb">My Training <ChevronRight size={14}/> <b>{active}</b></div><div className="top-actions"><span className="sync"><span className="dot"/> Cloud sincronizzato</span><button className="icon-button" aria-label="Esci" title="Esci" onClick={signOut}><LogOut size={17}/></button></div></header>
       <div className="content">
-        <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{active!=='Palestra' && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
-        {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
-        {garminSyncReport && <section className="panel garmin-sync-report">
-          <div className="panel-heading"><div><h2>Riepilogo sincronizzazione Garmin</h2><p>Dati effettivamente presenti nelle attività sincronizzate</p></div><span className="status-active">Completata</span></div>
-          <div className="garmin-report-grid">
-            <div><strong>{garminSyncReport.imported}</strong><span>Attività sincronizzate</span></div>
-            <div><strong>{garminSyncReport.checkedForDetails}</strong><span>Attività analizzate</span></div>
-            <div><strong>{garminSyncReport.enriched}</strong><span>Attività arricchite</span></div>
-            <div><strong>{garminSyncReport.heartRateActivities}</strong><span>Con frequenza cardiaca</span></div>
-            <div><strong>{garminSyncReport.elevationActivities}</strong><span>Con dislivello</span></div>
-            <div><strong>{garminSyncReport.gpsTracks}</strong><span>Tracce GPS</span></div>
-            <div><strong>{garminSyncReport.elevationProfiles}</strong><span>Profili altimetrici</span></div>
-          </div>
-        </section>}
-        {active==='Impostazioni' ? <SettingsPage email={session.user.email} onSync={syncGarmin} syncing={garminSyncing}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
+        <div className="page-heading"><div><div className="eyebrow">IL TUO PERCORSO, SOTTO CONTROLLO</div><h1>{active==='Panoramica'?'Buongiorno':active}</h1><p>Monitora le attività, consulta lo storico e segui i tuoi progressi.</p></div>{!['Palestra','Studio'].includes(active) && <button className="primary-button" onClick={openNewActivity}><Plus size={17}/> Registra attività</button>}</div>
+        {error && <div className="notice error">{error}</div>}{notice && <div className="notice success">{notice}</div>}
+        {active==='Studio' ? <StudioPage userId={session.user.id}/> : active==='Impostazioni' ? <SettingsPage email={session.user.email} onSync={syncGarmin} syncing={garminSyncing}/> : active==='Palestra' ? <GymPage userId={session.user.id}/> : active==='Statistiche' ? <StatisticsPage activities={activities} userId={session.user.id}/> : <>
           <section className="stats-grid">
             {active==='Running' || active==='Ciclismo' ? <>
               <Stat icon={Activity} label={active==='Running'?'Corse registrate':'Uscite registrate'} value={disciplineActivities.length} foot="Solo questa disciplina"/>
@@ -455,20 +428,21 @@ function GymPlanManager({userId,onSaved}) {
   const [editing,setEditing]=useState(null),[name,setName]=useState(''),[notes,setNotes]=useState(''),[items,setItems]=useState([{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90}]);
   const [running,setRunning]=useState(null),[sets,setSets]=useState([]),[rest,setRest]=useState(0),[paused,setPaused]=useState(false),[timerEdit,setTimerEdit]=useState('90'),[saving,setSaving]=useState(false);
   const timer=useRef(null);
-  async function load(){setLoading(true);const {data,error}=await supabase.from('workout_plans').select('id,name,notes,workout_plan_exercises(id,exercise_name,sort_order,sets_count,reps,starting_weight_kg,rest_seconds)').order('created_at',{ascending:false});if(error)setError(error.message);else setPlans((data||[]).map(p=>({...p,workout_plan_exercises:(p.workout_plan_exercises||[]).sort((a,b)=>a.sort_order-b.sort_order)})));setLoading(false);}
+  async function load(){setLoading(true);const {data,error}=await supabase.from('workout_plans').select('id,name,notes,workout_plan_exercises(id,exercise_name,sort_order,sets_count,reps,starting_weight_kg,rest_seconds,set_details)').order('created_at',{ascending:false});if(error)setError(error.message);else setPlans((data||[]).map(p=>({...p,workout_plan_exercises:(p.workout_plan_exercises||[]).sort((a,b)=>a.sort_order-b.sort_order)})));setLoading(false);}
   useEffect(()=>{load();},[userId]);
   useEffect(()=>{if(rest>0&&!paused){timer.current=setTimeout(()=>setRest(v=>Math.max(0,v-1)),1000);return()=>clearTimeout(timer.current);}return()=>clearTimeout(timer.current);},[rest,paused]);
   useEffect(()=>()=>clearTimeout(timer.current),[]);
-  function edit(p=null){setEditing(p?.id||null);setName(p?.name||'Nuova scheda');setNotes(p?.notes||'');setItems(p?p.workout_plan_exercises.map(x=>({id:x.id,exercise_name:x.exercise_name,sets_count:x.sets_count,reps:x.reps,weight:x.starting_weight_kg,rest:x.rest_seconds})): [{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90}]);}
-  function change(i,k,v){setItems(old=>old.map((x,j)=>i===j?{...x,[k]:v}:x));}
+  function edit(p=null){setEditing(p?.id||null);setName(p?.name||'Nuova scheda');setNotes(p?.notes||'');setItems(p?p.workout_plan_exercises.map(x=>({id:x.id,exercise_name:x.exercise_name,sets_count:x.sets_count,reps:x.reps,weight:x.starting_weight_kg,rest:x.rest_seconds,set_details:Array.isArray(x.set_details)&&x.set_details.length?x.set_details:Array.from({length:x.sets_count},()=>({reps:x.reps,weight:x.starting_weight_kg,rest:x.rest_seconds}))})): [{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90,set_details:[{reps:10,weight:0,rest:90},{reps:10,weight:0,rest:90},{reps:10,weight:0,rest:90}]}]);}
+  function change(i,k,v){setItems(old=>old.map((x,j)=>{if(j!==i)return x;const next={...x,[k]:v};if(k==='sets_count'){const count=Math.max(1,Math.min(30,Number(v)||1));next.sets_count=count;next.set_details=Array.from({length:count},(_,n)=>x.set_details?.[n]||{reps:x.reps,weight:x.weight,rest:x.rest});}return next;}));}
+  function changePlanSet(i,n,k,v){setItems(old=>old.map((x,j)=>j===i?{...x,set_details:x.set_details.map((d,z)=>z===n?{...d,[k]:v}:d)}:x));}
   async function save(e){e.preventDefault();setSaving(true);setError('');const valid=items.filter(x=>x.exercise_name.trim());if(!name.trim()||!valid.length){setError('Inserisci un nome e almeno un esercizio.');setSaving(false);return;}
     let id=editing;let r=editing?await supabase.from('workout_plans').update({name:name.trim(),notes:notes.trim()||null}).eq('id',editing).eq('user_id',userId):await supabase.from('workout_plans').insert({user_id:userId,name:name.trim(),notes:notes.trim()||null}).select('id').single();
     if(r.error){setError(r.error.message);setSaving(false);return;}if(!editing)id=r.data.id;
     const d=await supabase.from('workout_plan_exercises').delete().eq('plan_id',id);if(d.error){setError(d.error.message);setSaving(false);return;}
-    const ins=await supabase.from('workout_plan_exercises').insert(valid.map((x,i)=>({plan_id:id,exercise_name:x.exercise_name.trim(),sort_order:i,sets_count:Number(x.sets_count)||1,reps:Number(x.reps)||0,starting_weight_kg:Number(x.weight)||0,rest_seconds:Number(x.rest)||0})));
+    const ins=await supabase.from('workout_plan_exercises').insert(valid.map((x,i)=>({plan_id:id,exercise_name:x.exercise_name.trim(),sort_order:i,sets_count:Number(x.sets_count)||1,reps:Number(x.reps)||0,starting_weight_kg:Number(x.weight)||0,rest_seconds:Number(x.rest)||0,set_details:x.set_details.map(d=>({reps:Number(d.reps)||0,weight_kg:Number(d.weight)||0,rest_seconds:Number(d.rest)||0}))})));
     if(ins.error)setError(ins.error.message);else{setEditing(null);setName('');setNotes('');await load();}setSaving(false);
   }
-  async function duplicate(p){const {data,error}=await supabase.from('workout_plans').insert({user_id:userId,name:`${p.name} (copia)`,notes:p.notes}).select('id').single();if(error){setError(error.message);return;}const r=await supabase.from('workout_plan_exercises').insert(p.workout_plan_exercises.map((x,i)=>({plan_id:data.id,exercise_name:x.exercise_name,sort_order:i,sets_count:x.sets_count,reps:x.reps,starting_weight_kg:x.starting_weight_kg,rest_seconds:x.rest_seconds})));if(r.error)setError(r.error.message);else load();}
+  async function duplicate(p){const {data,error}=await supabase.from('workout_plans').insert({user_id:userId,name:`${p.name} (copia)`,notes:p.notes}).select('id').single();if(error){setError(error.message);return;}const r=await supabase.from('workout_plan_exercises').insert(p.workout_plan_exercises.map((x,i)=>({plan_id:data.id,exercise_name:x.exercise_name,sort_order:i,sets_count:x.sets_count,reps:x.reps,starting_weight_kg:x.starting_weight_kg,rest_seconds:x.rest_seconds,set_details:x.set_details||null})));if(r.error)setError(r.error.message);else load();}
   async function remove(p){if(!window.confirm(`Eliminare la scheda ${p.name}?`))return;const {error}=await supabase.from('workout_plans').delete().eq('id',p.id);if(error)setError(error.message);else setPlans(v=>v.filter(x=>x.id!==p.id));}
   async function start(p){
     setError('');
@@ -479,7 +453,7 @@ function GymPlanManager({userId,onSaved}) {
     const latest=new Map();
     for(const row of data||[]){const key=String(row.exercise_name||'').trim().toLocaleLowerCase('it-IT');if(key&&!latest.has(key)&&row.weight_kg!=null)latest.set(key,Number(row.weight_kg));}
     setRunning(p);
-    setSets(p.workout_plan_exercises.flatMap(ex=>Array.from({length:ex.sets_count},(_,i)=>({exercise:ex.exercise_name,number:i+1,reps:ex.reps,weight:latest.get(ex.exercise_name.trim().toLocaleLowerCase('it-IT'))??ex.starting_weight_kg,rest:ex.rest_seconds,done:false}))));
+    setSets(p.workout_plan_exercises.flatMap(ex=>Array.from({length:ex.sets_count},(_,i)=>{const d=ex.set_details?.[i]||{reps:ex.reps,weight:ex.starting_weight_kg,rest:ex.rest_seconds};return {exercise:ex.exercise_name,number:i+1,reps:d.reps,weight:d.weight_kg??d.weight??latest.get(ex.exercise_name.trim().toLocaleLowerCase('it-IT'))??ex.starting_weight_kg,rest:d.rest_seconds??d.rest??ex.rest_seconds,done:false};})));
   }
   function mark(i){setSets(old=>old.map((x,j)=>j===i?{...x,done:true}:x));const sec=Number(sets[i]?.rest)||0;if(sec){setRest(sec);setTimerEdit(String(sec));setPaused(false);}}
   async function finish(){setSaving(true);const {data,error}=await supabase.from('workout_sessions').insert({user_id:userId,title:running.name,performed_at:new Date().toISOString(),notes:null,plan_id:running.id}).select('id').single();if(error){setError(error.message);setSaving(false);return;}const rows=sets.map(x=>({session_id:data.id,exercise_name:x.exercise,set_number:x.number,reps:Number(x.reps)||0,weight_kg:Number(x.weight)||0,rest_seconds:x.rest,completed:x.done}));const r=await supabase.from('workout_sets').insert(rows);if(r.error)setError(r.error.message);else{setRunning(null);setSets([]);setRest(0);onSaved?.();}setSaving(false);}
@@ -489,8 +463,8 @@ function GymPlanManager({userId,onSaved}) {
   </div>;
   return <div className="gym-plan-manager"><div className="panel plan-manager-head"><div><div className="eyebrow">PROGRAMMI RIUTILIZZABILI</div><h2>Schede di allenamento</h2><p>Crea più programmi e avvia una sessione guidata. I carichi dell’ultima volta restano modificabili.</p></div><button className="primary-button" onClick={()=>edit()}><Plus size={16}/> Nuova scheda</button></div>
     {error&&<div className="notice error">{error}</div>}
-    {editing!==null||name!==''?<form className="panel plan-editor" onSubmit={save}><div className="modal-head"><h3>{editing?'Modifica scheda':'Nuova scheda'}</h3><button type="button" className="icon-button" onClick={()=>{setEditing(null);setName('');}}>✕</button></div><label>Nome<input required value={name} onChange={e=>setName(e.target.value)}/></label><label>Note<input value={notes} onChange={e=>setNotes(e.target.value)}/></label>{items.map((x,i)=><div className="plan-exercise-form" key={i}><label>Esercizio<input required value={x.exercise_name} onChange={e=>change(i,'exercise_name',e.target.value)} placeholder="Nome esercizio"/></label><div className="gym-fields"><label>Serie<input type="number" min="1" value={x.sets_count} onChange={e=>change(i,'sets_count',e.target.value)}/></label><label>Ripetizioni<input type="number" min="1" value={x.reps} onChange={e=>change(i,'reps',e.target.value)}/></label><label>Carico kg<input type="number" min="0" step="0.5" value={x.weight} onChange={e=>change(i,'weight',e.target.value)}/></label><label>Recupero sec<input type="number" min="0" value={x.rest} onChange={e=>change(i,'rest',e.target.value)}/></label></div><button type="button" className="remove-set-button" onClick={()=>setItems(v=>v.filter((_,j)=>j!==i))}>Rimuovi esercizio</button></div>)}<button type="button" className="secondary-button" onClick={()=>setItems(v=>[...v,{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90}])}><Plus size={14}/> Aggiungi esercizio</button><button className="primary-button" disabled={saving}>{saving?'Salvataggio…':'Salva scheda'}</button></form>:null}
-    {loading?<div className="empty">Caricamento schede…</div>:<div className="plan-grid">{plans.map(p=><article className="panel plan-card" key={p.id}><div className="plan-card-head"><div><h3>{p.name}</h3><small>{p.workout_plan_exercises.length} esercizi</small></div><div className="gym-session-actions"><button className="edit-button" onClick={()=>{edit(p);}} title="Modifica"><Pencil size={15}/></button><button className="edit-button" onClick={()=>duplicate(p)} title="Duplica"><Copy size={15}/></button><button className="delete-button" onClick={()=>remove(p)} title="Elimina"><Trash2 size={15}/></button></div></div><ul>{p.workout_plan_exercises.map(x=><li key={x.id}>{x.exercise_name}<span>{x.sets_count} × {x.reps} · {x.starting_weight_kg} kg</span></li>)}</ul><button className="primary-button full" onClick={()=>start(p)}><Play size={15}/> Avvia sessione</button></article>)}</div>}
+    {editing!==null||name!==''?<form className="panel plan-editor" onSubmit={save}><div className="modal-head"><h3>{editing?'Modifica scheda':'Nuova scheda'}</h3><button type="button" className="icon-button" onClick={()=>{setEditing(null);setName('');}}>✕</button></div><label>Nome<input required value={name} onChange={e=>setName(e.target.value)}/></label><label>Note<input value={notes} onChange={e=>setNotes(e.target.value)}/></label>{items.map((x,i)=><div className="plan-exercise-form" key={i}><label>Esercizio<input required value={x.exercise_name} onChange={e=>change(i,'exercise_name',e.target.value)} placeholder="Nome esercizio"/></label><div className="gym-fields"><label>Serie<input type="number" min="1" value={x.sets_count} onChange={e=>change(i,'sets_count',e.target.value)}/></label><label>Ripetizioni<input type="number" min="1" value={x.reps} onChange={e=>change(i,'reps',e.target.value)}/></label><label>Carico kg<input type="number" min="0" step="0.5" value={x.weight} onChange={e=>change(i,'weight',e.target.value)}/></label><label>Recupero sec<input type="number" min="0" value={x.rest} onChange={e=>change(i,'rest',e.target.value)}/></label></div><div className="plan-set-config"><b>Parametri per ogni serie</b>{(x.set_details||[]).map((d,n)=><div className="plan-set-config-row" key={n}><span>Serie {n+1}</span><label>Ripetizioni<input type="number" min="0" value={d.reps} onChange={e=>changePlanSet(i,n,'reps',e.target.value)}/></label><label>Carico kg<input type="number" min="0" step="0.5" value={d.weight} onChange={e=>changePlanSet(i,n,'weight',e.target.value)}/></label><label>Recupero sec<input type="number" min="0" value={d.rest} onChange={e=>changePlanSet(i,n,'rest',e.target.value)}/></label></div>)}</div><button type="button" className="remove-set-button" onClick={()=>setItems(v=>v.filter((_,j)=>j!==i))}>Rimuovi esercizio</button></div>)}<button type="button" className="secondary-button" onClick={()=>setItems(v=>[...v,{exercise_name:'',sets_count:3,reps:10,weight:0,rest:90,set_details:[{reps:10,weight:0,rest:90},{reps:10,weight:0,rest:90},{reps:10,weight:0,rest:90}]}])}><Plus size={14}/> Aggiungi esercizio</button><button className="primary-button" disabled={saving}>{saving?'Salvataggio…':'Salva scheda'}</button></form>:null}
+    {loading?<div className="empty">Caricamento schede…</div>:<div className="plan-grid">{plans.map(p=><article className="panel plan-card" key={p.id}><div className="plan-card-head"><div><h3>{p.name}</h3><small>{p.workout_plan_exercises.length} esercizi</small></div><div className="gym-session-actions"><button className="edit-button" onClick={()=>{edit(p);}} title="Modifica"><Pencil size={15}/></button><button className="edit-button" onClick={()=>duplicate(p)} title="Duplica"><Copy size={15}/></button><button className="delete-button" onClick={()=>remove(p)} title="Elimina"><Trash2 size={15}/></button></div></div><ul>{p.workout_plan_exercises.map(x=><li key={x.id}>{x.exercise_name}<span>{x.sets_count} serie · dettagli personalizzati</span></li>)}</ul><button className="primary-button full" onClick={()=>start(p)}><Play size={15}/> Avvia sessione</button></article>)}</div>}
   </div>;
 }
 
@@ -614,7 +588,7 @@ function GymPage({userId}) {
   const latestWeight = [...exerciseProgress].reverse().find(item=>item.maxWeight != null)?.maxWeight ?? null;
   return <div className="gym-page">
     <GymPlanManager userId={userId} onSaved={loadSessions}/>
-    {error && <div className="notice error">{error}</div>}{notice && <div className="notice">{notice}</div>}
+    {error && <div className="notice error">{error}</div>}{notice && <div className="notice success">{notice}</div>}
         
     <div className="gym-intro panel"><div><div className="eyebrow">ALLENAMENTO CON I PESI</div><h2>Il tuo diario palestra</h2><p>Registra esercizi, serie, ripetizioni, carichi e recuperi. I dati vengono salvati nel tuo archivio personale.</p></div><button className="primary-button" onClick={openForm}><Plus size={17}/> Nuovo allenamento</button></div>
     <div className="gym-summary"><div className="stat-card"><div className="stat-top"><span>Allenamenti</span><Dumbbell size={18}/></div><strong>{sessions.length}</strong><small>Sessioni registrate</small></div><div className="stat-card"><div className="stat-top"><span>Serie registrate</span><Activity size={18}/></div><strong>{totalSets}</strong><small>Totale serie nello storico</small></div></div>
@@ -653,6 +627,37 @@ function GymPage({userId}) {
 }
 
 
+function StudioPage({userId}) {
+  const [sessions,setSessions]=useState([]),[subjects,setSubjects]=useState([]),[tasks,setTasks]=useState([]);
+  const [subject,setSubject]=useState(''),[selectedSubject,setSelectedSubject]=useState(''),[topic,setTopic]=useState(''),[goal,setGoal]=useState(10),[task,setTask]=useState('');
+  const [running,setRunning]=useState(false),[paused,setPaused]=useState(false),[startedAt,setStartedAt]=useState(null),[elapsed,setElapsed]=useState(0),[sessionNote,setSessionNote]=useState('');
+  const [manualMinutes,setManualMinutes]=useState('60'),[manualDate,setManualDate]=useState(new Date().toISOString().slice(0,10));
+  const [loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[mode,setMode]=useState('timer');
+  const tick=useRef(null);
+  async function load(){setLoading(true);setError('');const [a,b,c]=await Promise.all([supabase.from('study_sessions').select('*').eq('user_id',userId).order('started_at',{ascending:false}),supabase.from('study_subjects').select('*').eq('user_id',userId).order('name'),supabase.from('study_tasks').select('*').eq('user_id',userId).order('due_date',{ascending:true})]);const err=a.error||b.error||c.error;if(err)setError(`Impossibile caricare Studio: ${err.message}`);else{setSessions(a.data||[]);setSubjects(b.data||[]);setTasks(c.data||[]);}setLoading(false);}
+  useEffect(()=>{load();},[userId]);
+  useEffect(()=>{if(running&&!paused){tick.current=setInterval(()=>setElapsed(v=>v+1),1000);return()=>clearInterval(tick.current);}return()=>clearInterval(tick.current);},[running,paused]);
+  const fmt=n=>`${String(Math.floor(n/3600)).padStart(2,'0')}:${String(Math.floor(n%3600/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;
+  const totalSeconds=sessions.reduce((a,x)=>a+(Number(x.duration_seconds)||0),0), today=new Date().toISOString().slice(0,10),weekAgo=new Date(Date.now()-6*86400000).toISOString().slice(0,10);
+  const weekSeconds=sessions.filter(x=>(x.started_at||'').slice(0,10)>=weekAgo).reduce((a,x)=>a+(Number(x.duration_seconds)||0),0);
+  async function addSubject(e){e.preventDefault();if(!subject.trim())return;const {error}=await supabase.from('study_subjects').insert({user_id:userId,name:subject.trim(),weekly_goal_hours:Number(goal)||0});if(error)setError(error.message);else{setSubject('');setNotice('Materia aggiunta.');load();}}
+  async function finishSession(){const duration=Math.max(1,elapsed);const {error}=await supabase.from('study_sessions').insert({user_id:userId,subject_id:selectedSubject||null,topic:topic.trim()||null,notes:sessionNote.trim()||null,started_at:new Date(Date.now()-duration*1000).toISOString(),ended_at:new Date().toISOString(),duration_seconds:duration,session_date:today});if(error)setError(error.message);else{setNotice('Sessione di studio salvata.');setRunning(false);setPaused(false);setElapsed(0);setTopic('');setSessionNote('');load();}}
+  async function addManual(e){e.preventDefault();const mins=Number(manualMinutes);if(!mins||mins<1)return;const start=new Date(`${manualDate}T12:00:00`);const {error}=await supabase.from('study_sessions').insert({user_id:userId,subject_id:selectedSubject||null,topic:topic.trim()||null,notes:'Sessione inserita manualmente',started_at:new Date(start.getTime()-mins*60000).toISOString(),ended_at:start.toISOString(),duration_seconds:mins*60,session_date:manualDate});if(error)setError(error.message);else{setNotice('Tempo di studio registrato.');load();}}
+  async function addTask(e){e.preventDefault();if(!task.trim())return;const {error}=await supabase.from('study_tasks').insert({user_id:userId,title:task.trim(),due_date:today,completed:false});if(error)setError(error.message);else{setTask('');load();}}
+  async function toggleTask(t){const {error}=await supabase.from('study_tasks').update({completed:!t.completed}).eq('id',t.id);if(error)setError(error.message);else setTasks(v=>v.map(x=>x.id===t.id?{...x,completed:!x.completed}:x));}
+  async function deleteSession(id){if(!confirm('Eliminare questa sessione di studio?'))return;const {error}=await supabase.from('study_sessions').delete().eq('id',id);if(error)setError(error.message);else setSessions(v=>v.filter(x=>x.id!==id));}
+  return <div className="studio-page">
+    {error&&<div className="notice error">{error}</div>}{notice&&<div className="notice success">{notice}</div>}
+    <div className="studio-kpis"><div className="stat-card"><span>Tempo totale studiato</span><strong>{(totalSeconds/3600).toLocaleString('it-IT',{maximumFractionDigits:1})} h</strong></div><div className="stat-card"><span>Ultimi 7 giorni</span><strong>{(weekSeconds/3600).toLocaleString('it-IT',{maximumFractionDigits:1})} h</strong></div><div className="stat-card"><span>Sessioni registrate</span><strong>{sessions.length}</strong></div><div className="stat-card"><span>Obiettivo settimanale</span><strong>{subjects.reduce((a,x)=>a+(Number(x.weekly_goal_hours)||0),0)} h</strong></div></div>
+    <section className="panel studio-focus"><div className="eyebrow">FOCUS E CONCENTRAZIONE</div><h2>{running?'Sessione in corso':'Pronto a concentrarti?'}</h2><div className="studio-clock">{fmt(elapsed)}</div><div className="studio-controls">{!running?<button className="primary-button" onClick={()=>{setElapsed(0);setRunning(true);setPaused(false);}}> <Play size={16}/> Avvia studio</button>:<><button className="primary-button" onClick={()=>setPaused(v=>!v)}>{paused?<Play size={16}/>:<Pause size={16}/>} {paused?'Riprendi':'Pausa'}</button><button className="secondary-button" onClick={finishSession}>Termina e salva</button></>}</div>
+    <div className="studio-form-grid"><label>Materia<select value={selectedSubject} onChange={e=>setSelectedSubject(e.target.value)}><option value="">Nessuna materia</option>{subjects.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Argomento<input value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Es. Analisi matematica"/></label><label>Note della sessione<input value={sessionNote} onChange={e=>setSessionNote(e.target.value)} placeholder="Cosa hai studiato?"/></label></div>
+    </section>
+    <div className="studio-columns"><section className="panel"><div className="panel-heading"><div><h2>Le mie materie</h2><p>Organizza il percorso e gli obiettivi settimanali</p></div></div><form className="studio-inline-form" onSubmit={addSubject}><label>Nuova materia<input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="Es. Programmazione"/></label><label>Obiettivo ore/settimana<input type="number" min="0" step="0.5" value={goal} onChange={e=>setGoal(e.target.value)}/></label><button className="primary-button"><Plus size={15}/> Aggiungi</button></form><div className="studio-subject-list">{subjects.map(x=><div key={x.id}><b>{x.name}</b><span>{x.weekly_goal_hours} h / settimana</span></div>)}{!subjects.length&&<p className="empty">Aggiungi la prima materia.</p>}</div></section>
+    <section className="panel"><div className="panel-heading"><div><h2>Attività da completare</h2><p>Piccoli obiettivi, un passo alla volta</p></div></div><form className="studio-inline-form" onSubmit={addTask}><label>Nuova attività<input value={task} onChange={e=>setTask(e.target.value)} placeholder="Es. Ripassare capitolo 3"/></label><button className="primary-button"><Plus size={15}/> Aggiungi</button></form><div className="studio-task-list">{tasks.map(t=><label key={t.id}><input type="checkbox" checked={!!t.completed} onChange={()=>toggleTask(t)}/><span className={t.completed?'done':''}>{t.title}</span></label>)}{!tasks.length&&<p className="empty">Nessuna attività in elenco.</p>}</div></section></div>
+    <div className="studio-columns"><section className="panel"><div className="panel-heading"><div><h2>Registra tempo manualmente</h2><p>Per lo studio svolto senza avviare il timer</p></div></div><form className="studio-inline-form" onSubmit={addManual}><label>Data<input type="date" max={today} value={manualDate} onChange={e=>setManualDate(e.target.value)}/></label><label>Minuti<input type="number" min="1" value={manualMinutes} onChange={e=>setManualMinutes(e.target.value)}/></label><button className="secondary-button">Registra</button></form></section><section className="panel"><div className="panel-heading"><div><h2>Ultime sessioni</h2><p>Storico del tempo dedicato allo studio</p></div></div>{loading?<p className="empty">Caricamento…</p>:sessions.slice(0,8).map(x=><div className="studio-session-row" key={x.id}><div><b>{subjects.find(s=>s.id===x.subject_id)?.name||'Studio'}</b><small>{new Date(x.started_at).toLocaleString('it-IT')} · {Math.round(x.duration_seconds/60)} min{x.topic?` · ${x.topic}`:''}</small></div><button className="delete-button" onClick={()=>deleteSession(x.id)}><Trash2 size={15}/></button></div>)}</section></div>
+  </div>;
+}
+
 function dateKey(date) {
   const y=date.getFullYear(), m=String(date.getMonth()+1).padStart(2,'0'), d=String(date.getDate()).padStart(2,'0');
   return `${y}-${m}-${d}`;
@@ -690,16 +695,16 @@ function CalendarPage({activities,userId}) {
   const visibleDays=view==='month'?monthCells:Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);return d;});
   const selectedEvents=eventsByDate[selected]||[];
   const monthLabel=cursor.toLocaleDateString('it-IT',{month:'long',year:'numeric'});
-  function move(step){const next=new Date(cursor);if(view==='month')next.setMonth(next.getMonth()+step);else next.setDate(next.getDate()+step*7);setCursor(next);}
+  function move(step){const next=new Date(cursor);if(view==='month')next.setMonth(next.getMonth()+step);else next.setDate(next.getDate()+step*7);const now=new Date();const max=new Date(now.getFullYear(),now.getMonth(),1);if(next>max)return;setCursor(next);}
   function goToday(){const now=new Date();setCursor(new Date(now.getFullYear(),now.getMonth(),1));setSelected(dateKey(now));}
   return <div className="calendar-page">
     {error&&<div className="notice error">{error}</div>}
     <section className="panel calendar-panel">
-      <div className="calendar-toolbar"><div><div className="eyebrow">IL TUO ARCHIVIO SPORTIVO</div><h2>{monthLabel}</h2><p>{events.length} attività e allenamenti registrati</p></div><div className="calendar-controls"><button className="secondary-button" onClick={goToday}>Oggi</button><button className="icon-button" aria-label="Periodo precedente" onClick={()=>move(-1)}><ChevronLeft size={17}/></button><button className="icon-button" aria-label="Periodo successivo" onClick={()=>move(1)}><ChevronRight size={17}/></button><div className="calendar-view-switch"><button className={view==='month'?'active':''} onClick={()=>setView('month')}>Mese</button><button className={view==='week'?'active':''} onClick={()=>setView('week')}>Settimana</button></div></div></div>
+      <div className="calendar-toolbar"><div><div className="eyebrow">IL TUO ARCHIVIO SPORTIVO</div><h2>{monthLabel}</h2><p>{events.length} attività e allenamenti registrati</p></div><div className="calendar-controls"><button className="secondary-button" onClick={goToday}>Oggi</button><button className="icon-button" aria-label="Periodo precedente" onClick={()=>move(-1)}><ChevronLeft size={17}/></button><button className="icon-button" aria-label="Periodo successivo" disabled={cursor.getFullYear()===new Date().getFullYear()&&cursor.getMonth()===new Date().getMonth()} onClick={()=>move(1)}><ChevronRight size={17}/></button><div className="calendar-view-switch"><button className={view==='month'?'active':''} onClick={()=>setView('month')}>Mese</button><button className={view==='week'?'active':''} onClick={()=>setView('week')}>Settimana</button></div></div></div>
       <div className="calendar-legend"><span><i className="legend-dot running-dot"/> Running</span><span><i className="legend-dot cycling-dot"/> Ciclismo</span><span><i className="legend-dot gym-dot"/> Palestra</span><span><i className="legend-dot other-dot"/> Altre attività</span></div>
       <div className={`calendar-grid ${view==='week'?'week-view':''}`}>
         {['Lun','Mar','Mer','Gio','Ven','Sab','Dom'].map(day=><div className="calendar-weekday" key={day}>{day}</div>)}
-        {visibleDays.map(day=>{const key=dateKey(day),dayEvents=eventsByDate[key]||[],outside=day.getMonth()!==cursor.getMonth();return <button key={key} className={`calendar-day ${outside&&view==='month'?'outside':''} ${selected===key?'chosen':''} ${key===dateKey(new Date())?'today':''}`} onClick={()=>setSelected(key)}><span className="calendar-day-number">{day.getDate()}</span><span className="calendar-day-events">{dayEvents.slice(0,3).map(event=><span key={event.id} className={`calendar-event ${event.type==='Running'?'running-event':event.type==='Ciclismo'?'cycling-event':event.type==='Palestra'?'gym-event':'other-event'}`}>{event.title}</span>)}{dayEvents.length>3&&<small>+{dayEvents.length-3} altre</small>}</span><span className="calendar-mobile-count">{dayEvents.length?`${dayEvents.length} att.`:''}</span></button>;})}
+        {visibleDays.map(day=>{const key=dateKey(day),dayEvents=eventsByDate[key]||[],outside=day.getMonth()!==cursor.getMonth();return <button key={key} className={`calendar-day ${outside&&view==='month'?'outside':''} ${selected===key?'chosen':''} ${key===dateKey(new Date())?'today':''}`} disabled={key>dateKey(new Date())} onClick={()=>setSelected(key)}><span className="calendar-day-number">{day.getDate()}</span><span className="calendar-day-events">{dayEvents.slice(0,3).map(event=><span key={event.id} className={`calendar-event ${event.type==='Running'?'running-event':event.type==='Ciclismo'?'cycling-event':event.type==='Palestra'?'gym-event':'other-event'}`}>{event.title}</span>)}{dayEvents.length>3&&<small>+{dayEvents.length-3} altre</small>}</span><span className="calendar-mobile-count">{dayEvents.length?`${dayEvents.length} att.`:''}</span></button>;})}
       </div>
       {loading&&<div className="calendar-loading">Caricamento allenamenti palestra…</div>}
     </section>
