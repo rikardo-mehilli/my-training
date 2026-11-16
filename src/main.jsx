@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
-import { Activity, Bike, CalendarDays, ChartNoAxesCombined, BookOpen, ChevronLeft, ChevronRight, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil, Play, Pause, Timer, Copy, Check, X } from 'lucide-react';
+import { Activity, Bike, CalendarDays, ChartNoAxesCombined, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Clock3, Dumbbell, Footprints, Gauge, LayoutDashboard, Plus, Search, Settings, Upload, UserRound, Waves, LogOut, Trash2, Pencil, Play, Pause, Timer, Copy, Check, X } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import L from 'leaflet';
 import { Decoder, Stream } from '@garmin/fitsdk';
@@ -17,7 +17,10 @@ const supabase = createClient(
 const trend = [{day:'Lun',value:0},{day:'Mar',value:58},{day:'Mer',value:0},{day:'Gio',value:72},{day:'Ven',value:0},{day:'Sab',value:145},{day:'Dom',value:42}];
 const nav = [
   {label:'Panoramica', icon:LayoutDashboard}, {label:'Registro attività', icon:Activity},
-  {label:'Palestra', icon:Dumbbell}, {label:'Studio', icon:BookOpen}, {label:'Running', icon:Footprints}, {label:'Ciclismo', icon:Bike}, {label:'Statistiche', icon:ChartNoAxesCombined}, {label:'Impostazioni', icon:Settings}
+  {label:'Studio', icon:BookOpen}, {label:'Statistiche', icon:ChartNoAxesCombined}, {label:'Impostazioni', icon:Settings}
+];
+const trainingNav = [
+  {label:'Palestra', icon:Dumbbell}, {label:'Running', icon:Footprints}, {label:'Ciclismo', icon:Bike}
 ];
 
 function numberFrom(value) {
@@ -199,6 +202,7 @@ function App() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [active, setActive] = useState('Panoramica');
+  const [trainingMenuOpen, setTrainingMenuOpen] = useState(false);
   const [activityLimit, setActivityLimit] = useState(10);
   const [activities, setActivities] = useState([]);
   const [query, setQuery] = useState('');
@@ -377,7 +381,13 @@ function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Activity size={21}/></div><div><b>MY TRAINING</b><small>PERSONAL FITNESS HUB</small></div></div>
       <div className="nav-caption">WORKSPACE</div>
-      <nav>{nav.map(({label,icon:Icon})=><button key={label} className={`nav-item ${active===label?'selected':''}`} onClick={()=>setActive(label)}><Icon size={18}/><span>{label}</span>{label==='Registro attività'&&<span className="nav-count">{activities.length}</span>}</button>)}</nav>
+      <nav>{nav.slice(0,2).map(({label,icon:Icon})=><button key={label} className={`nav-item ${active===label?'selected':''}`} onClick={()=>setActive(label)}><Icon size={18}/><span>{label}</span>{label==='Registro attività'&&<span className="nav-count">{activities.length}</span>}</button>)}
+        <div className={`nav-group ${trainingNav.some(item=>item.label===active)?'has-selected':''}`}>
+          <button type="button" className={`nav-item nav-group-trigger ${trainingNav.some(item=>item.label===active)?'selected':''}`} aria-expanded={trainingMenuOpen} onClick={()=>setTrainingMenuOpen(v=>!v)}><Activity size={18}/><span>Allenamenti</span><ChevronDown className={`nav-chevron ${trainingMenuOpen?'open':''}`} size={15}/></button>
+          {trainingMenuOpen&&<div className="nav-submenu">{trainingNav.map(({label,icon:Icon})=><button key={label} className={`nav-item nav-subitem ${active===label?'selected':''}`} onClick={()=>setActive(label)}><Icon size={16}/><span>{label}</span></button>)}</div>}
+        </div>
+        {nav.slice(2).map(({label,icon:Icon})=><button key={label} className={`nav-item ${active===label?'selected':''}`} onClick={()=>setActive(label)}><Icon size={18}/><span>{label}</span></button>)}
+      </nav>
       <div className="sidebar-bottom"><div className="profile"><div className="avatar"><UserRound size={18}/></div><div><b>Area personale</b><small>{session.user.email}</small></div></div><div className="private-note">I tuoi dati, in un unico posto.</div></div>
     </aside>
     <main className="main">
